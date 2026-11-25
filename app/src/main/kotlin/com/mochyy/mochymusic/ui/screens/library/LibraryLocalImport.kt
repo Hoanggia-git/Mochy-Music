@@ -21,6 +21,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import com.mochyy.mochymusic.R
@@ -30,7 +31,7 @@ import com.mochyy.mochymusic.ui.component.TopToaster
 import com.mochyy.mochymusic.viewmodels.LibraryImportViewModel
 import kotlinx.coroutines.launch
 
-/** Audio types the picker offers: every audio type, plus the common ones named outright. */
+// every audio type plus lyrics files and pictures, which go to the song with the same name; .lrc and .krc often come without a proper type, so plain binary files show too
 private val LocalAudioMimeTypes = arrayOf(
     "audio/*",
     "audio/mpeg",
@@ -40,6 +41,12 @@ private val LocalAudioMimeTypes = arrayOf(
     "audio/wav",
     "audio/x-wav",
     "audio/aac",
+    "text/*",
+    "application/octet-stream",
+    "application/xml",
+    "application/ttml+xml",
+    "application/x-subrip",
+    "image/*",
 )
 
 /** The Local tab's ways in, as one handle. */
@@ -89,10 +96,11 @@ fun rememberLocalImportActions(viewModel: LibraryImportViewModel): LocalImportAc
         menuState.showAddLocalMusicSheet(viewModel, onStarted = showProgress)
     }
 
+    val stillRunning = stringResource(R.string.lib_import_still_running)
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isEmpty()) return@rememberLauncherForActivityResult
         if (!viewModel.importPicked(uris)) {
-            TopToaster.show("An import is still running. Try again once it's done.", iconRes = R.drawable.library_music)
+            TopToaster.show(stillRunning, iconRes = R.drawable.library_music)
         }
         showProgress()
     }
@@ -104,9 +112,9 @@ fun rememberLocalImportActions(viewModel: LibraryImportViewModel): LocalImportAc
         } else {
             // a second "no" stops Android asking at all, so point to where it can still be turned on
             TopToaster.show(
-                text = "Mochy can't see your music without access",
+                text = context.getString(R.string.lib_local_no_access),
                 iconRes = R.drawable.storage,
-                actionLabel = "Settings",
+                actionLabel = context.getString(R.string.settings),
                 onAction = {
                     context.startActivity(
                         Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
@@ -126,12 +134,13 @@ fun rememberLocalImportActions(viewModel: LibraryImportViewModel): LocalImportAc
 
     val refreshThenScan = {
         scope.launch {
-            val started = viewModel.refreshLocal()
+            val rescan = viewModel.refreshLocal()
             when {
-                started -> showProgress()
+                rescan.started -> showProgress()
                 actions.hasStorageAccess -> openAddMusic()
                 !viewModel.hasFolders() -> permission.launch(DeviceMusicScanner.permission)
-                else -> TopToaster.show("No new songs in your music folders", iconRes = R.drawable.library_music)
+                // songs whose file is gone, or files skipped, matter more than there being nothing new
+                !rescan.alreadyTold -> TopToaster.show(context.getString(R.string.lib_local_no_new_songs), iconRes = R.drawable.library_music)
             }
         }
         Unit

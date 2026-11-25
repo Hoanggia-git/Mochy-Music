@@ -4,6 +4,7 @@ import com.mochyy.mochymusic.ui.player.videoCropTransform
 import com.mochyy.mochymusic.utils.VideoStreams
 import com.mochyy.mochymusic.utils.VideoTrack
 import com.mochyy.mochymusic.utils.pickVideoFamily
+import com.mochyy.mochymusic.utils.videoLines
 import com.music.innertube.models.response.PlayerResponse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -54,6 +55,8 @@ class VideoDashTest {
     private fun streams(vararg tracks: VideoTrack, durationMs: Long = 200_000L) =
         VideoStreams("abc", tracks.toList(), emptyMap(), Long.MAX_VALUE, durationMs)
 
+    private fun manifest(s: VideoStreams) = VideoDash.manifest(s.tracks, s.durationMs)
+
     @Test
     fun `h264 wins over vp9 and audio, one per size, the steadier frame rate first`() {
         val formats = listOf(
@@ -68,6 +71,15 @@ class VideoDashTest {
     }
 
     @Test
+    fun `sizes go by youtube's names whatever the picture's shape`() {
+        assertEquals(1080, videoLines(1920, 800))
+        assertEquals(1080, videoLines(1440, 1080))
+        assertEquals(1080, videoLines(1080, 1920))
+        assertEquals(240, videoLines(426, 240))
+        assertEquals(2160, videoLines(3840, 1600))
+    }
+
+    @Test
     fun `vp9 stands in when a video has no h264`() {
         val formats = listOf(
             format(247, "video/webm; codecs=\"vp9\"", 1280, 720),
@@ -78,7 +90,7 @@ class VideoDashTest {
 
     @Test
     fun `the manifest lists every size with its byte ranges and escapes the links`() {
-        val xml = VideoDash.manifest(streams(track(134, 360), track(136, 720)))!!
+        val xml = manifest(streams(track(134, 360), track(136, 720)))!!
         assertTrue(xml.contains("<Representation id=\"134\""))
         assertTrue(xml.contains("<Representation id=\"136\""))
         assertTrue(xml.contains("<SegmentBase indexRange=\"741-1500\"><Initialization range=\"0-740\"/>"))
@@ -88,8 +100,8 @@ class VideoDashTest {
 
     @Test
     fun `a video youtube only serves whole gets no manifest`() {
-        assertNull(VideoDash.manifest(streams(track(18, 360, chunked = false))))
-        assertNull(VideoDash.manifest(streams(track(136, 720), durationMs = 0L)))
+        assertNull(manifest(streams(track(18, 360, chunked = false))))
+        assertNull(manifest(streams(track(136, 720), durationMs = 0L)))
     }
 
     @Test

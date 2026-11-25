@@ -21,10 +21,13 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import com.mochyy.mochymusic.R
 import com.mochyy.mochymusic.ui.component.DefaultDialog
+import com.mochyy.mochymusic.ui.component.LocalZoomOutOverlayState
 import com.mochyy.mochymusic.ui.component.SettingsGroup
 import com.mochyy.mochymusic.ui.component.SettingsGroupStyle
 import com.mochyy.mochymusic.ui.component.SettingsItem
 import com.mochyy.mochymusic.ui.component.SubSettingsScaffold
+import com.mochyy.mochymusic.ui.screens.devices.rememberDevicesLink
+import com.mochyy.mochymusic.ui.screens.devices.showDeviceIntegration
 import com.mochyy.mochymusic.viewmodels.ImportSyncViewModel
 import java.time.LocalDate
 
@@ -37,13 +40,15 @@ fun ImportSyncScreen(
     val progress by viewModel.importProgress.collectAsState()
     val exportMessage by viewModel.exportMessage.collectAsState()
     val signedIn = rememberYouTubeSignedIn()
+    val sheets = LocalZoomOutOverlayState.current
+    val devices = rememberDevicesLink()
 
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
         if (uri != null) viewModel.export(uri)
     }
 
     SubSettingsScaffold(
-        title = "Import & sync",
+        title = stringResource(R.string.import_sync_title),
         onBack = { navController.navigateUp() },
     ) {
         if (progress.isRunning || progress.isDone) {
@@ -51,14 +56,27 @@ fun ImportSyncScreen(
             ImportInfoCard {
                 Text(
                     text = when {
-                        resync != null && progress.isRunning -> "Re-syncing \"${resync.playlistName}\"…"
-                        progress.isRunning -> "Importing… ${progress.processedTracks} of ${progress.totalTracks}"
-                        progress.cancelled -> "Import stopped"
-                        resync != null && resync.failed.size < resync.playlists ->
-                            (if (resync.playlists == 1) "Re-synced \"${resync.playlistName}\": " else "Re-synced ${resync.playlists} playlists: ") +
-                                if (resync.added == 1) "1 new song" else "${resync.added} new songs"
-                        progress.error != null -> "Import failed"
-                        else -> "Import finished: ${progress.matchedTracks} of ${progress.totalTracks} songs"
+                        resync != null && progress.isRunning -> stringResource(R.string.import_sync_progress_resyncing, resync.playlistName)
+                        progress.isRunning -> stringResource(
+                                    R.string.import_sync_progress_importing_count,
+                                    progress.processedTracks,
+                                    progress.totalTracks,
+                                )
+                        progress.cancelled -> stringResource(R.string.import_sync_progress_stopped)
+                        resync != null && resync.failed.size < resync.playlists -> {
+                            val countText = if (resync.added == 1) {
+                                stringResource(R.string.import_sync_progress_new_songs_single)
+                            } else {
+                                stringResource(R.string.import_sync_progress_new_songs_multiple, resync.added)
+                            }
+                            if (resync.playlists == 1) {
+                                stringResource(R.string.import_sync_progress_resynced_single, resync.playlistName, countText)
+                            } else {
+                                stringResource(R.string.import_sync_progress_resynced_multiple, resync.playlists, countText)
+                            }
+                        }
+                        progress.error != null -> stringResource(R.string.import_sync_progress_failed)
+                        else -> stringResource(R.string.import_sync_progress_finished_count, progress.matchedTracks, progress.totalTracks)
                     },
                     style = MaterialTheme.typography.titleMedium,
                 )
@@ -89,36 +107,36 @@ fun ImportSyncScreen(
             style = SettingsGroupStyle.Grouped,
             items = listOf(
                 SettingsItem(
-                    title = { Text("Import") },
+                    title = { Text(stringResource(R.string.import_sync_import_title)) },
                     highlightKey = "Import",
-                    descriptionText = "Sign in and pick playlists",
-                    detail = "Sign in to Spotify, Apple Music, YouTube Music or Tidal and pick playlists",
+                    descriptionText = stringResource(R.string.import_sync_import_desc),
+                    detail = stringResource(R.string.import_sync_import_detail),
                     icon = painterResource(R.drawable.playlist_add),
                     iconShape = CircleShape,
                     onClick = { navController.navigate(ImportProvidersRoute) },
                 ),
                 SettingsItem(
-                    title = { Text("Sync") },
+                    title = { Text(stringResource(R.string.import_sync_sync_title)) },
                     highlightKey = "Sync",
-                    descriptionText = if (signedIn) "YouTube account connected: playlists, likes and history"
-                    else "Connect your YouTube account to keep playlists, likes and history in step",
+                    descriptionText = if (signedIn) stringResource(R.string.import_sync_sync_desc_connected)
+                    else stringResource(R.string.import_sync_sync_desc_disconnected),
                     icon = painterResource(R.drawable.sync),
                     iconShape = CircleShape,
                     onClick = { navController.navigate(YouTubeSyncRoute) },
                 ),
                 SettingsItem(
-                    title = { Text(stringResource(R.string.tv_link_title)) },
-                    highlightKey = "Mochy on your TV",
-                    descriptionText = stringResource(R.string.tv_link_row_detail),
+                    title = { Text(stringResource(R.string.devices_title)) },
+                    highlightKey = "Device integration",
+                    descriptionText = stringResource(R.string.devices_row_detail),
                     icon = painterResource(R.drawable.smartphone),
                     iconShape = CircleShape,
-                    onClick = { navController.navigate(com.mochyy.mochymusic.ui.screens.settings.tvlink.TvLinkRoute) },
+                    onClick = { sheets.showDeviceIntegration(devices) },
                 ),
                 SettingsItem(
-                    title = { Text("TuneMyMusic CSV") },
+                    title = { Text(stringResource(R.string.import_sync_tunemymusic_title)) },
                     highlightKey = "TuneMyMusic CSV",
-                    descriptionText = "Amazon Music, SoundCloud, Deezer and more",
-                    detail = "Any other service, such as Amazon Music, SoundCloud or Deezer libraries",
+                    descriptionText = stringResource(R.string.import_sync_tunemymusic_desc),
+                    detail = stringResource(R.string.import_sync_tunemymusic_detail),
                     icon = painterResource(R.drawable.web_link),
                     iconShape = CircleShape,
                     onClick = { navController.navigate(ImportTuneMyMusicRoute) },
@@ -129,14 +147,14 @@ fun ImportSyncScreen(
         Spacer(Modifier.height(16.dp))
 
         SettingsGroup(
-            title = "Backup",
+            title = stringResource(R.string.import_sync_backup_title),
             style = SettingsGroupStyle.Grouped,
             items = listOf(
                 SettingsItem(
-                    title = { Text("Export to Mochy CSV") },
+                    title = { Text(stringResource(R.string.import_sync_export_csv_title)) },
                     highlightKey = "Export to Mochy CSV",
-                    descriptionText = "Liked songs and playlists",
-                    detail = "Liked songs and playlists, import it back from Import → Mochy backup",
+                    descriptionText = stringResource(R.string.import_sync_export_csv_desc),
+                    detail = stringResource(R.string.import_sync_export_csv_detail),
                     icon = painterResource(R.drawable.backup),
                     iconShape = CircleShape,
                     onClick = { exportLauncher.launch("mochy-library-${LocalDate.now()}.csv") },
@@ -150,10 +168,10 @@ fun ImportSyncScreen(
         DefaultDialog(
             onDismiss = { if (!working) viewModel.clearExportMessage() },
             buttons = {
-                if (!working) TextButton(onClick = viewModel::clearExportMessage) { Text("OK") }
+                if (!working) TextButton(onClick = viewModel::clearExportMessage) { Text(stringResource(R.string.import_sync_btn_ok)) }
             },
         ) {
-            Text(message, style = MaterialTheme.typography.bodyLarge)
+            Text(if (working) stringResource(R.string.import_sync_exporting) else message, style = MaterialTheme.typography.bodyLarge)
         }
     }
 }

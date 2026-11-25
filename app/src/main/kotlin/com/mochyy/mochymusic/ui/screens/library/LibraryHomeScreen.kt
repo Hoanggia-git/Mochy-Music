@@ -1,14 +1,16 @@
 // LibraryHomeScreen.kt
 //
-// The Library tab's landing page: collapsing title + search, then All / Local / Cached / Imported.
-// All has the import banner, Pinned, the four category cards, Recently added and Liked; the others
-// are in LibraryLocalTab.kt, LibraryCachedTab.kt and LibraryImportedTab.kt. While songs download or
-// files come in from the phone, a progress card sits at the top of All and Local.
+// The Library tab's landing page: collapsing title + search, then All / Local / Cached / History /
+// Genres / Imported. All has the import banner, Pinned, the four category cards, Recently
+// added and Liked; the others are in LibraryLocalTab.kt, LibraryCachedTab.kt, LibraryMoreTabs.kt and
+// LibraryImportedTab.kt. While songs download or files come in from the phone, a progress card sits
+// at the top of All and Local.
 
 package com.mochyy.mochymusic.ui.screens.library
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -36,6 +38,7 @@ import com.mochyy.mochymusic.ui.menu.rememberResyncAll
 import com.mochyy.mochymusic.LocalPlayerAwareWindowInsets
 import com.mochyy.mochymusic.R
 import com.mochyy.mochymusic.LocalPlayerConnection
+import com.mochyy.mochymusic.constants.HideLibraryImportBannerKey
 import com.mochyy.mochymusic.constants.ProfilePicUriKey
 import com.mochyy.mochymusic.db.entities.Song
 import com.mochyy.mochymusic.extensions.toMediaItem
@@ -51,10 +54,17 @@ import com.mochyy.mochymusic.ui.screens.search.SearchHorizontalPadding
 import com.mochyy.mochymusic.ui.screens.search.rememberCollapseProgress
 import com.mochyy.mochymusic.ui.screens.settings.importsync.ImportProgressRoute
 import com.mochyy.mochymusic.utils.rememberPreference
+import com.mochyy.mochymusic.viewmodels.HistoryViewModel
 import com.mochyy.mochymusic.viewmodels.LibraryHomeViewModel
+import com.mochyy.mochymusic.viewmodels.LocalGenresViewModel
 import com.mochyy.mochymusic.viewmodels.LibraryImportViewModel
 import com.music.innertube.models.SongItem
 import com.music.innertube.models.YTItem
+import kotlin.math.ceil
+
+// the biggest a pinned cover gets before another one fits in its row
+private val PinnedTileMax = 150.dp
+private val PinnedGap = 12.dp
 
 @Composable
 fun LibraryHomeScreen(
@@ -85,11 +95,24 @@ fun LibraryHomeScreen(
     val shelfData = tab.shelf?.let { collectShelfTabData(viewModel, it) }
     val localActions = rememberLocalImportActions(importViewModel)
 
-    // read inside the Cached tab's rows only, so playback changes don't recompose this screen
+    // read inside the Cached and History tabs' rows only, so playback changes don't recompose this screen
     val nowPlaying = playerConnection?.mediaMetadata?.collectAsState()
     val isPlaying = playerConnection?.isEffectivelyPlaying?.collectAsState()
 
+    // the History and Genres tabs only load once they're opened: one reads every play, the other every local song's genre
+    val historyEvents = if (tab == LibraryTab.History) {
+        hiltViewModel<HistoryViewModel>().events.collectAsState().value
+    } else {
+        null
+    }
+    val genres = if (tab == LibraryTab.Genres) {
+        hiltViewModel<LocalGenresViewModel>().genres.collectAsState().value
+    } else {
+        null
+    }
+
     val profilePicStr by rememberPreference(ProfilePicUriKey, defaultValue = "")
+    val (hideImportBanner, onHideImportBannerChange) = rememberPreference(HideLibraryImportBannerKey, defaultValue = false)
 
     var query by remember { mutableStateOf(TextFieldValue()) }
     val results = remember(query.text, songs, artists, albums, playlists, tab, shelfData) {
@@ -174,13 +197,18 @@ fun LibraryHomeScreen(
                         playlists = playlists.size,
                         playlistCovers = playlists.take(2).flatMap { it.thumbnails },
                         likedSongs = likedSongs,
-                        importBanner = {
-                            LibraryImportBanner(
-                                progress = importProgress,
-                                onOpenSheet = openImportSheet,
-                                onOpenProgress = openImportProgress,
-                                modifier = Modifier.padding(horizontal = SearchHorizontalPadding),
-                            )
+                        importBanner = if (!hideImportBanner || importProgress.isRunning) {
+                            {
+                                LibraryImportBanner(
+                                    progress = importProgress,
+                                    onOpenSheet = openImportSheet,
+                                    onOpenProgress = openImportProgress,
+                                    onDismiss = { onHideImportBannerChange(true) },
+                                    modifier = Modifier.padding(horizontal = SearchHorizontalPadding),
+                                )
+                            }
+                        } else {
+                            null
                         },
                         onOpen = { item -> openLibraryItem(item, navController, playerConnection, songs) },
                         onUnpin = viewModel::unpin,
@@ -231,6 +259,10 @@ fun LibraryHomeScreen(
                     )
                 }
 
+                LibraryTab.History -> libraryHistoryTab(historyEvents, nowPlaying, isPlaying, playerConnection, navController)
+
+                LibraryTab.Genres -> libraryGenresTab(genres, navController)
+
                 LibraryTab.Imported -> libraryImportedTab(
                     importProgress = importProgress,
                     services = services,
@@ -260,8 +292,8 @@ private fun LazyListScope.libraryProgressCards(
 ) {
     item(key = "progress_cards") {
         Column(modifier = Modifier.padding(horizontal = SearchHorizontalPadding)) {
-            LibraryProgressCard(TransferKind.Downloads.title, downloads, onClick = { onOpen(TransferKind.Downloads) })
-            LibraryProgressCard(TransferKind.LocalImport.title, localImports, onClick = { onOpen(TransferKind.LocalImport) })
+            LibraryProgressCard(stringResource(TransferKind.Downloads.title), downloads, onClick = { onOpen(TransferKind.Downloads) })
+            LibraryProgressCard(stringResource(TransferKind.LocalImport.title), localImports, onClick = { onOpen(TransferKind.LocalImport) })
         }
     }
 }
@@ -276,16 +308,18 @@ private fun LazyListScope.libraryAllTab(
     playlists: Int,
     playlistCovers: List<String?>,
     likedSongs: List<Song>,
-    importBanner: @Composable () -> Unit,
+    importBanner: (@Composable () -> Unit)?,
     onOpen: (YTItem) -> Unit,
     onUnpin: (String) -> Unit,
     navController: NavController,
 ) {
     // Even in a library with nothing in it - that is when it matters most. Opens the import sheet,
     // and is the import's progress bar while one runs.
-    item(key = "import_banner") {
-        importBanner()
-        Spacer(modifier = Modifier.height(16.dp))
+    if (importBanner != null) {
+        item(key = "import_banner") {
+            importBanner()
+            Spacer(modifier = Modifier.height(16.dp))
+        }
     }
 
     // A completely empty library gets one honest message instead of four zero-count cards.
@@ -306,23 +340,24 @@ private fun LazyListScope.libraryAllTab(
         item(key = "pinned_grid") {
             // Chunked rows rather than a nested lazy grid: a scrolling grid inside a scrolling
             // column has no bounded height, and nine items never needs its own scroller.
-            Column(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = SearchHorizontalPadding),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                pinnedItems.take(9).chunked(3).forEach { row ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        row.forEach { item ->
-                            LibraryPinnedTile(
-                                thumbnailUrl = item.thumbnail,
-                                sharedElementKey = com.mochyy.mochymusic.ui.component.coverTransitionKey(item),
-                                onClick = { onOpen(item) },
-                                onLongClick = { onUnpin(item.id) },
-                                modifier = Modifier.weight(1f),
-                            )
+            BoxWithConstraints(modifier = Modifier.fillMaxWidth().padding(horizontal = SearchHorizontalPadding)) {
+                // three across on a phone held upright; on its side three filled the width and each tile was taller than the screen
+                val columns = ceil((maxWidth + PinnedGap) / (PinnedTileMax + PinnedGap)).toInt().coerceIn(3, 9)
+                Column(verticalArrangement = Arrangement.spacedBy(PinnedGap)) {
+                    pinnedItems.take(9).chunked(columns).forEach { row ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(PinnedGap)) {
+                            row.forEach { item ->
+                                LibraryPinnedTile(
+                                    thumbnailUrl = item.thumbnail,
+                                    sharedElementKey = com.mochyy.mochymusic.ui.component.coverTransitionKey(item),
+                                    onClick = { onOpen(item) },
+                                    onLongClick = { onUnpin(item.id) },
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                            // Keeps the last row's tiles the same size as a full row's.
+                            repeat(columns - row.size) { Spacer(modifier = Modifier.weight(1f)) }
                         }
-                        // Keeps the last row's tiles the same size as a full row's.
-                        repeat(3 - row.size) { Spacer(modifier = Modifier.weight(1f)) }
                     }
                 }
             }

@@ -41,6 +41,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -62,6 +63,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 import com.mochyy.mochymusic.ui.component.RemoteFocus
+import com.mochyy.mochymusic.ui.component.sheetHandleRoom
 
 /** tapping the player's title opens this: the song, a few lines about it, its artists and album, then about song and stream info */
 @Composable
@@ -105,7 +107,7 @@ fun SongDetailsSheet(
                         val artistId = artist.id!!
                         val avatar by rememberArtistAvatar(artistId)
                         DetailRow(
-                            title = "View ${artist.name}",
+                            title = stringResource(R.string.ps_details_view, artist.name),
                             onClick = { onOpenArtist(artistId) },
                         ) {
                             DetailImage(
@@ -117,7 +119,7 @@ fun SongDetailsSheet(
                     }
                     song.album?.let { album ->
                         DetailRow(
-                            title = "View ${album.title}",
+                            title = stringResource(R.string.ps_details_view, album.title),
                             onClick = { onOpenAlbum(album.id) },
                         ) {
                             DetailImage(
@@ -128,13 +130,13 @@ fun SongDetailsSheet(
                         }
                     }
                     DetailRow(
-                        title = "About song",
+                        title = stringResource(R.string.ps_details_about_song),
                         onClick = { showAbout = true },
                     ) {
                         DetailGlyph(R.drawable.info)
                     }
                     DetailRow(
-                        title = "Stream info",
+                        title = stringResource(R.string.ps_details_stream_info),
                         enabled = streaming,
                         onClick = { showStream = true },
                     ) {
@@ -168,6 +170,7 @@ private fun ColumnScope.SheetColumn(content: @Composable ColumnScope.() -> Unit)
             .weight(1f, fill = false)
             // the full video mode's card is only as tall as the phone is wide, so the rows scroll there
             .verticalScroll(rememberScrollState())
+            .padding(top = sheetHandleRoom())
             .fillMaxWidth()
             .navigationBarsPadding()
             .padding(horizontal = 20.dp)
@@ -317,7 +320,7 @@ private fun DoneButton(onClick: () -> Unit) {
                 onClick = onClick,
             ),
     ) {
-        Text(text = "done", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        Text(text = stringResource(R.string.ps_offset_done), color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
     }
 }
 

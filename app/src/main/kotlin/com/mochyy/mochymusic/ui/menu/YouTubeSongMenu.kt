@@ -97,7 +97,7 @@ fun YouTubeSongMenu(
     val context = LocalContext.current
     val database = LocalDatabase.current
     val playerConnection = LocalPlayerConnection.current ?: return
-    val librarySong by database.song(song.id).collectAsState(initial = null)
+    val librarySong by remember(database, song.id) { database.song(song.id) }.collectAsState(initial = null)
     val downloadUtil = LocalDownloadUtil.current
 
     val download by remember(downloadUtil, song.id) {
@@ -105,7 +105,7 @@ fun YouTubeSongMenu(
     }.collectAsState(initial = null)
     val coroutineScope = rememberCoroutineScope()
     val syncUtils = LocalSyncUtils.current
-    val isPinned by database.speedDialDao.isPinned(song.id).collectAsState(initial = false)
+    val isPinned by remember(database, song.id) { database.speedDialDao.isPinned(song.id) }.collectAsState(initial = false)
     val artists = remember {
         song.artists.mapNotNull {
             it.id?.let { artistId ->
@@ -120,14 +120,9 @@ fun YouTubeSongMenu(
 
     AddToPlaylistDialog(
         isVisible = showChoosePlaylistDialog,
-        onGetSong = { playlist ->
+        onGetSong = {
             database.withTransaction {
                 insert(song.toMediaMetadata())
-            }
-            coroutineScope.launch(Dispatchers.IO) {
-                playlist.playlist.browseId?.let { browseId ->
-                    YouTube.addToPlaylist(browseId, song.id)
-                }
             }
             listOf(song.id)
         },
@@ -355,7 +350,11 @@ fun YouTubeSongMenu(
                                 )
                             },
                             onClick = {
-                                playerConnection.playQueue(YouTubeQueue.radio(song.toMediaMetadata()))
+                                if (song.id == playerConnection.mediaMetadata.value?.id) {
+                                    playerConnection.startRadioSeamlessly()
+                                } else {
+                                    playerConnection.playQueue(YouTubeQueue.radio(song.toMediaMetadata()))
+                                }
                                 onDismiss()
                             }
                         )

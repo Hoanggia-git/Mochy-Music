@@ -18,12 +18,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -35,19 +30,21 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.mochyy.mochymusic.R
 import com.mochyy.mochymusic.constants.CrossmixMode
 import com.mochyy.mochymusic.constants.CrossmixModeKey
 import com.mochyy.mochymusic.constants.DisableAiFilterKey
 import com.mochyy.mochymusic.constants.DisableBlurKey
+import com.mochyy.mochymusic.constants.DefaultTransitionMode
 import com.mochyy.mochymusic.importer.account.AccountImportState
 import com.mochyy.mochymusic.importer.account.AccountService
 import com.mochyy.mochymusic.ui.screens.settings.importsync.onSignInTick
@@ -65,7 +62,6 @@ import com.mochyy.mochymusic.ui.screens.setup.onboarding.ImportAskPage
 import com.mochyy.mochymusic.ui.screens.setup.onboarding.ImportModePage
 import com.mochyy.mochymusic.ui.screens.setup.onboarding.LastOnePage
 import com.mochyy.mochymusic.ui.screens.setup.onboarding.Onb
-import com.mochyy.mochymusic.ui.screens.setup.onboarding.OnbButton
 import com.mochyy.mochymusic.ui.screens.setup.onboarding.OnboardingBrowserSheet
 import com.mochyy.mochymusic.ui.screens.setup.onboarding.ProfilePage
 import com.mochyy.mochymusic.ui.screens.setup.onboarding.ProviderListPage
@@ -84,6 +80,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import com.mochyy.mochymusic.ui.component.backdropClick
+import com.mochyy.mochymusic.ui.component.SheetHandleRow
 
 private enum class Step {
     Welcome, ImportAsk, ImportMode, Restoring, Providers, ProviderSetup, WhatToSync, SyncOptions,
@@ -265,10 +262,10 @@ fun SetupWizardScreen(
 
     // ---- settings the last pages flip ----
     val (disableBlur, onDisableBlurChange) = rememberPreference(DisableBlurKey, defaultValue = false)
-    val (crossmixMode, onCrossmixModeChange) = rememberEnumPreference(CrossmixModeKey, defaultValue = CrossmixMode.AUTO_CROSSFADE)
+    val (crossmixMode, onCrossmixModeChange) = rememberEnumPreference(CrossmixModeKey, defaultValue = DefaultTransitionMode)
     val (disableAiFilter, onDisableAiFilterChange) = rememberPreference(DisableAiFilterKey, defaultValue = false)
 
-    val card = CardInfo(username = username, photo = profilePicUri, cardNumber = vm.cardNumber, joinedText = vm.joinedText)
+    val card = CardInfo(username = username, photo = profilePicUri, cardNumber = vm.cardNumber, joinedText = stringResource(R.string.profile_joined_at, vm.joinedDateText))
 
     fun afterHello(): Step = if (vm.blur?.verdict == BlurCapability.Verdict.Laggy) Step.BlurWarning else Step.LastOne
 
@@ -323,25 +320,21 @@ fun SetupWizardScreen(
                     modifier = Modifier.fillMaxSize(),
                 ) { current ->
                     when (current) {
-                        // the welcome page runs to the top of the sheet under the handle, pushed down its strip showed as a bar
-                        Step.Welcome -> Box(Modifier.fillMaxSize().background(Color.Black)) {
-                            WelcomeStep(isHiding = isLeavingWelcome)
-                            OnbButton(
-                                text = "Next",
-                                onClick = {
+                        // the welcome page runs to the top of the sheet under the handle, a tap anywhere on it moves on
+                        Step.Welcome -> WelcomeStep(
+                            isHiding = isLeavingWelcome,
+                            onNext = {
+                                // a second tap while she's waving goodbye would skip a page
+                                if (!isLeavingWelcome) {
                                     isLeavingWelcome = true
                                     scope.launch {
                                         delay(400)
                                         go(Step.ImportAsk)
                                         isLeavingWelcome = false
                                     }
-                                },
-                                modifier = Modifier
-                                    .align(Alignment.BottomCenter)
-                                    .navigationBarsPadding()
-                                    .padding(horizontal = 28.dp, vertical = 18.dp),
-                            )
-                        }
+                                }
+                            },
+                        )
 
                         Step.ImportAsk -> ImportAskPage(
                             onYes = { go(Step.ImportMode) },
@@ -425,7 +418,7 @@ fun SetupWizardScreen(
                                 if (existing != null) selectedUncroppedUri = existing else openPhotoPicker()
                             },
                             cardNumber = vm.cardNumber,
-                            joinedText = vm.joinedText,
+                            joinedText = stringResource(R.string.profile_joined_at, vm.joinedDateText),
                             onNext = { if (username.isNotBlank()) go(Step.Hello) },
                         )
 
@@ -446,7 +439,7 @@ fun SetupWizardScreen(
 
                         Step.LastOne -> LastOnePage(
                             autoCrossfade = crossmixMode != CrossmixMode.OFF,
-                            onAutoCrossfadeChange = { on -> onCrossmixModeChange(if (on) CrossmixMode.AUTO_CROSSFADE else CrossmixMode.OFF) },
+                            onAutoCrossfadeChange = { on -> onCrossmixModeChange(if (on) CrossmixMode.CROSSMIX else CrossmixMode.OFF) },
                             aiArtistFilter = !disableAiFilter,
                             onAiArtistFilterChange = { on -> onDisableAiFilterChange(!on) },
                             onNext = { go(Step.Done) },
@@ -505,10 +498,11 @@ fun SetupWizardScreen(
                 }
             }
 
-            // the onboarding sheet's own handle; dragging it rubber-bands the whole sheet
-            Box(
+            // the onboarding sheet's own handle; dragging it only rubber-bands the sheet, so its bar never turns into an arrow
+            SheetHandleRow(
+                bend = { 0f },
+                fade = { Onb.Page },
                 modifier = Modifier
-                    .fillMaxWidth()
                     .height(40.dp)
                     .pointerInput(Unit) {
                         detectVerticalDragGestures(
@@ -520,16 +514,7 @@ fun SetupWizardScreen(
                             onDragCancel = onDragRelease,
                         )
                     },
-                contentAlignment = Alignment.Center,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .width(100.dp)
-                        .height(4.dp)
-                        .clip(CircleShape)
-                        .background(Color.White.copy(alpha = 0.5f)),
-                )
-            }
+            )
         }
     }
 }

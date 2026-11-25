@@ -46,7 +46,7 @@ import com.mochyy.mochymusic.constants.TransportFadeMinSeconds
 import com.mochyy.mochymusic.constants.TransportFadeSecondsKey
 import com.mochyy.mochymusic.ui.screens.audiolab.LabCard
 import com.mochyy.mochymusic.ui.screens.audiolab.LabCollapsible
-import com.mochyy.mochymusic.ui.screens.audiolab.LabPicker
+import com.mochyy.mochymusic.ui.screens.audiolab.LabSelect
 import com.mochyy.mochymusic.ui.screens.audiolab.LabColors
 import com.mochyy.mochymusic.ui.screens.audiolab.LabSlider
 import com.mochyy.mochymusic.ui.screens.audiolab.LabStage
@@ -78,16 +78,7 @@ fun TransportFadeSection() {
     val dataSaving = rememberDataSaverActive()
     val seconds = storedSeconds.coerceIn(TransportFadeMinSeconds, TransportFadeMaxSeconds)
 
-    Text(
-        text = "Pause, play, forward and backward transition",
-        fontFamily = InterFontFamily,
-        fontWeight = FontWeight.SemiBold,
-        fontSize = 26.sp,
-        lineHeight = 30.sp,
-        letterSpacing = (-0.6).sp,
-        color = LabColors.Secondary,
-        modifier = Modifier.padding(start = 4.dp, end = 24.dp, top = 28.dp, bottom = 20.dp),
-    )
+    TransitionHeading(stringResource(R.string.transition_transport_heading), Modifier.padding(top = 28.dp))
 
     LabCard(padding = 14.dp) {
         LabStage(height = 150.dp) {
@@ -95,14 +86,14 @@ fun TransportFadeSection() {
         }
         Spacer(Modifier.height(10.dp))
         LabToggleRow(
-            title = "Enable fade",
-            subtitle = "Eases the music out when you pause or skip, and back in when you play",
+            title = stringResource(R.string.transition_fade_title),
+            subtitle = stringResource(R.string.transition_fade_desc),
             checked = enabled,
             onCheckedChange = onEnabledChange,
         )
         LabToggleRow(
             title = androidx.compose.ui.res.stringResource(com.mochyy.mochymusic.R.string.settings_blend_skips),
-            subtitle = androidx.compose.ui.res.stringResource(com.mochyy.mochymusic.R.string.settings_blend_skips_desc),
+            subtitle = stringResource(R.string.settings_blend_skips_desc),
             checked = blendSkips,
             onCheckedChange = onBlendSkipsChange,
         )
@@ -113,7 +104,7 @@ fun TransportFadeSection() {
         LabCollapsible(enabled || blendSkips) {
             Box(Modifier.padding(horizontal = 6.dp)) {
                 LabSlider(
-                    label = "Length",
+                    label = stringResource(R.string.xmix_length),
                     valueText = secondsText(seconds),
                     value = seconds,
                     onValueChange = { onSecondsChange((it * 2f).roundToInt() / 2f) },
@@ -129,9 +120,9 @@ fun TransportFadeSection() {
         LabCollapsible(enabled) {
             Spacer(Modifier.height(14.dp))
             Column(Modifier.padding(horizontal = 6.dp)) {
-                Text("Layered effect", fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, color = LabColors.Primary)
+                Text(stringResource(R.string.xmix_layered_effect), fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, color = LabColors.Primary)
                 Text(
-                    "A CrossMix effect over the fade, like an echo trail or the record spinning back",
+                    stringResource(R.string.xmix_layered_effect_desc),
                     fontFamily = InterFontFamily,
                     fontSize = 12.sp,
                     lineHeight = 15.sp,
@@ -139,11 +130,11 @@ fun TransportFadeSection() {
                 )
             }
             Spacer(Modifier.height(12.dp))
-            LabPicker(
+            LabSelect(
                 options = TransportEffect.entries.map { it.label },
                 selectedIndex = effect.ordinal,
                 onSelect = { onEffectChange(TransportEffect.entries[it]) },
-                contentDescription = "Choose an effect",
+                contentDescription = stringResource(R.string.xmix_choose_effect),
             )
             Spacer(Modifier.height(4.dp))
         }

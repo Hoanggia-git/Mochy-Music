@@ -3,14 +3,14 @@
 package com.mochyy.mochymusic.extensions
 
 import android.os.Bundle
-import androidx.core.net.toUri
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata.MEDIA_TYPE_MUSIC
 import com.music.innertube.models.SongItem
 import com.mochyy.mochymusic.db.entities.Song
+import com.mochyy.mochymusic.importer.LocalArtwork
 import com.mochyy.mochymusic.models.MediaMetadata
 import com.mochyy.mochymusic.models.toMediaMetadata
-import com.mochyy.mochymusic.ui.utils.resize
+import com.mochyy.mochymusic.songedit.SongEdits
 
 val MediaItem.metadata: MediaMetadata?
     get() = localConfiguration?.tag as? MediaMetadata
@@ -25,7 +25,8 @@ fun Song.toMediaItem() = MediaItem.Builder()
             .setTitle(song.title)
             .setSubtitle(artists.joinToString { it.name })
             .setArtist(artists.joinToString { it.name })
-            .setArtworkUri(song.thumbnailUrl?.toUri())
+            // a local cover goes out as a link android auto and widgets can open, not a file inside mochy's own folder
+            .setArtworkUri(LocalArtwork.shareableUri(song.thumbnailUrl))
             .setAlbumTitle(song.albumName)
             .setAlbumArtist(artists.firstOrNull()?.name)
             .setDisplayTitle(song.title)
@@ -39,31 +40,13 @@ fun Song.toMediaItem() = MediaItem.Builder()
     )
     .build()
 
-fun SongItem.toMediaItem() = MediaItem.Builder()
-    .setMediaId(id)
-    .setUri(id)
-    .setCustomCacheKey(id)
-    .setTag(toMediaMetadata())
-    .setMediaMetadata(
-        androidx.media3.common.MediaMetadata.Builder()
-            .setTitle(title)
-            .setSubtitle(artists.joinToString { it.name })
-            .setArtist(artists.joinToString { it.name })
-            .setArtworkUri(thumbnail.resize(1200, 1200).toUri())
-            .setAlbumTitle(album?.name)
-            .setAlbumArtist(artists.firstOrNull()?.name)
-            .setDisplayTitle(title)
-            .setMediaType(MEDIA_TYPE_MUSIC)
-            .setIsBrowsable(false)
-            .setIsPlayable(true)
-            .setExtras(Bundle().apply {
-                putString("artwork_uri", thumbnail.resize(1200, 1200))
-            })
-            .build()
-    )
-    .build()
+// built through the metadata so a youtube result picks up the song's hand edits too
+fun SongItem.toMediaItem() = toMediaMetadata().toMediaItem()
 
-fun MediaMetadata.toMediaItem() = MediaItem.Builder()
+// the hand edits from the song edit sheet go on here, so the notification, the lock screen and the queue show them
+fun MediaMetadata.toMediaItem(): MediaItem = SongEdits.applyTo(this).buildMediaItem()
+
+private fun MediaMetadata.buildMediaItem() = MediaItem.Builder()
     .setMediaId(id)
     .setUri(localUri ?: id)
     .setCustomCacheKey(id)
@@ -73,7 +56,7 @@ fun MediaMetadata.toMediaItem() = MediaItem.Builder()
             .setTitle(title)
             .setSubtitle(artists.joinToString { it.name })
             .setArtist(artists.joinToString { it.name })
-            .setArtworkUri(thumbnailUrl?.toUri())
+            .setArtworkUri(LocalArtwork.shareableUri(thumbnailUrl))
             .setAlbumTitle(album?.title)
             .setAlbumArtist(artists.firstOrNull()?.name)
             .setDisplayTitle(title)
@@ -100,6 +83,24 @@ val MediaItem.isAutoplay: Boolean
 fun MediaItem.withAutoplay(autoplay: Boolean): MediaItem {
     if (isAutoplay == autoplay) return this
     val extras = Bundle(mediaMetadata.extras ?: Bundle()).apply { putBoolean(AutoplayExtra, autoplay) }
+    return buildUpon()
+        .setMediaMetadata(mediaMetadata.buildUpon().setExtras(extras).build())
+        .build()
+}
+
+/**
+ * Flags a song the user queued by hand ("Add to Queue" / "Play next"), as opposed to one that
+ * came with the queue they started or one Autoplay lined up. These are the queue's "Next in Queue"
+ * songs: they play ahead of everything else, and starting another song doesn't drop them.
+ */
+private const val ManualQueueExtra = "mochy.manualqueue"
+
+val MediaItem.isManualQueued: Boolean
+    get() = mediaMetadata.extras?.getBoolean(ManualQueueExtra, false) == true
+
+fun MediaItem.withManualQueued(manual: Boolean): MediaItem {
+    if (isManualQueued == manual) return this
+    val extras = Bundle(mediaMetadata.extras ?: Bundle()).apply { putBoolean(ManualQueueExtra, manual) }
     return buildUpon()
         .setMediaMetadata(mediaMetadata.buildUpon().setExtras(extras).build())
         .build()

@@ -1,4 +1,4 @@
-// a section of the modules page: each module's card on a fixed slot, dragged by the lines beside it into order and swiped left to delete
+// a section of the modules page: each module's card on a fixed slot, held to bring out the lines that drag it into order, and swiped left to delete
 
 package com.mochyy.mochymusic.ui.screens.settings.modules
 
@@ -9,6 +9,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -26,6 +27,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
@@ -42,11 +44,13 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -69,6 +73,12 @@ internal fun ModuleList(
     onOpen: (ModuleEntry) -> Unit,
     onRemove: (ModuleEntry) -> Unit,
     onReorder: (List<String>) -> Unit,
+    // the module being updated right now, and what a tap on a row's update pill does
+    updating: String? = null,
+    onUpdate: (ModuleEntry) -> Unit = {},
+    // the lines only show while sorting; holding a card turns sorting on and picks that card up
+    sorting: Boolean = false,
+    onStartSorting: () -> Unit = {},
 ) {
     val haptic = LocalHapticFeedback.current
     val density = LocalDensity.current
@@ -83,6 +93,10 @@ internal fun ModuleList(
     var dragOffset by remember { mutableFloatStateOf(0f) }
     val currentOrder by rememberUpdatedState(order)
     val currentOnReorder by rememberUpdatedState(onReorder)
+    val currentOnStartSorting by rememberUpdatedState(onStartSorting)
+    // read in layout and draw only, so the lines sliding in don't recompose every row each frame
+    val reveal = animateFloatAsState(if (sorting) 1f else 0f, spring(dampingRatio = 1f, stiffness = 500f), label = "handles")
+    val handlesShown by remember { derivedStateOf { reveal.value > 0f } }
     val shown = order.filter { it in byId }
 
     Box(Modifier.fillMaxWidth().height(rowHeight * shown.size + RowGap * (shown.size - 1).coerceAtLeast(0))) {
@@ -100,6 +114,28 @@ internal fun ModuleList(
                     }
                 }
                 val lift by animateFloatAsState(if (isDragged) 1f else 0f, spring(dampingRatio = 0.7f, stiffness = 600f), label = "lift")
+                // the same pick-up, move and drop whether the card was held or its lines were grabbed
+                fun startDrag() {
+                    dragging = id
+                    dragOffset = 0f
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                }
+                fun dragBy(amount: Float) {
+                    dragOffset += amount
+                    val list = currentOrder
+                    val from = list.indexOf(id)
+                    val to = (from + (dragOffset / slotPx).roundToInt()).coerceIn(0, list.size - 1)
+                    if (to != from) {
+                        order = list.toMutableList().apply { add(to, removeAt(from)) }
+                        dragOffset -= (to - from) * slotPx
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    }
+                }
+                fun endDrag() {
+                    dragging = null
+                    dragOffset = 0f
+                    currentOnReorder(currentOrder)
+                }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
@@ -124,54 +160,62 @@ internal fun ModuleList(
                         enabled = !isDragged,
                         slab = false,
                     ) {
-                        ModuleCard(entry, lifted = isDragged, onClick = { onOpen(entry) })
-                    }
-                    DragHandle(
-                        Modifier
-                            .width(HandleWidth)
-                            .fillMaxHeight()
-                            .pointerInput(Unit) { detectTapGestures {} }
-                            .pointerInput(id) {
-                                detectDragGestures(
+                        ModuleCard(
+                            entry, lifted = isDragged, updating = updating == id, onUpdate = { onUpdate(entry) }, onClick = { onOpen(entry) },
+                            hold = Modifier.pointerInput(id) {
+                                detectDragGesturesAfterLongPress(
                                     onDragStart = {
-                                        dragging = id
-                                        dragOffset = 0f
-                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        currentOnStartSorting()
+                                        startDrag()
                                     },
                                     onDrag = { change, amount ->
                                         change.consume()
-                                        dragOffset += amount.y
-                                        val list = currentOrder
-                                        val from = list.indexOf(id)
-                                        val to = (from + (dragOffset / slotPx).roundToInt()).coerceIn(0, list.size - 1)
-                                        if (to != from) {
-                                            order = list.toMutableList().apply { add(to, removeAt(from)) }
-                                            dragOffset -= (to - from) * slotPx
-                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        }
+                                        dragBy(amount.y)
                                     },
-                                    onDragEnd = {
-                                        dragging = null
-                                        dragOffset = 0f
-                                        currentOnReorder(currentOrder)
-                                    },
-                                    onDragCancel = {
-                                        dragging = null
-                                        dragOffset = 0f
-                                        currentOnReorder(currentOrder)
-                                    },
+                                    onDragEnd = { endDrag() },
+                                    onDragCancel = { endDrag() },
                                 )
                             },
-                    )
+                        )
+                    }
+                    if (handlesShown) {
+                        DragHandle(
+                            Modifier
+                                .revealWidth(HandleWidth) { reveal.value }
+                                .fillMaxHeight()
+                                .pointerInput(Unit) { detectTapGestures {} }
+                                .pointerInput(id, sorting) {
+                                    // while the lines slide away they're only a picture, not something to grab
+                                    if (!sorting) return@pointerInput
+                                    detectDragGestures(
+                                        onDragStart = { startDrag() },
+                                        onDrag = { change, amount ->
+                                            change.consume()
+                                            dragBy(amount.y)
+                                        },
+                                        onDragEnd = { endDrag() },
+                                        onDragCancel = { endDrag() },
+                                    )
+                                },
+                            visibility = { reveal.value },
+                        )
+                    }
                 }
             }
         }
     }
 }
 
+// grows from nothing to its full width, measured at full width the whole time so the lines slide in instead of squashing
+private fun Modifier.revealWidth(full: Dp, progress: () -> Float) = layout { measurable, constraints ->
+    val fullPx = full.roundToPx()
+    val placeable = measurable.measure(constraints.copy(minWidth = fullPx, maxWidth = fullPx))
+    layout((fullPx * progress()).roundToInt(), placeable.height) { placeable.place(0, 0) }
+}
+
 /** one module as the mock draws it: its icon, its name, how it's doing, and what it adds with its version in the corner */
 @Composable
-private fun ModuleCard(entry: ModuleEntry, lifted: Boolean, onClick: () -> Unit) {
+private fun ModuleCard(entry: ModuleEntry, lifted: Boolean, updating: Boolean, onUpdate: () -> Unit, onClick: () -> Unit, hold: Modifier) {
     val info = entry.module.info
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -181,24 +225,29 @@ private fun ModuleCard(entry: ModuleEntry, lifted: Boolean, onClick: () -> Unit)
             .clip(RoundedCornerShape(26.dp))
             .background(if (lifted) Color(0xFF222225) else ModuleRowColor)
             .clickable(onClick = onClick)
+            // after the click, so a hold that lets go without moving eats the release instead of opening the module
+            .then(hold)
             .padding(start = 18.dp, end = 16.dp, top = 14.dp, bottom = 12.dp),
     ) {
         ModuleLogo(entry.id, info.name, size = 56, art = entry.icon, corner = 0.24f)
         Spacer(Modifier.width(16.dp))
         Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.SpaceBetween) {
-            Column {
-                Text(
-                    info.name, fontFamily = InterFontFamily, fontWeight = FontWeight.Bold, fontSize = 21.sp,
-                    letterSpacing = (-0.6).sp, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    StatusDot(statusColor(entry), size = 7.dp)
-                    Spacer(Modifier.width(6.dp))
+            Row(verticalAlignment = Alignment.Top) {
+                Column(Modifier.weight(1f)) {
                     Text(
-                        moduleStatus(entry), fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 12.sp,
-                        color = Color.White.copy(alpha = 0.85f), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        info.name, fontFamily = InterFontFamily, fontWeight = FontWeight.Bold, fontSize = 21.sp,
+                        letterSpacing = (-0.6).sp, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        StatusDot(statusColor(entry), size = 7.dp)
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            moduleStatus(entry), fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 12.sp,
+                            color = Color.White.copy(alpha = 0.85f), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 }
+                if (entry.update != null) UpdatePill(updating, onUpdate)
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -215,14 +264,41 @@ private fun ModuleCard(entry: ModuleEntry, lifted: Boolean, onClick: () -> Unit)
     }
 }
 
-// the mock's three lines beside each card
+// a newer copy is out: one tap brings it in right from the list
 @Composable
-private fun DragHandle(modifier: Modifier) {
+private fun UpdatePill(updating: Boolean, onClick: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .padding(start = 8.dp)
+            .clip(RoundedCornerShape(50))
+            .background(Color.White)
+            .clickable(enabled = !updating, onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 5.dp),
+    ) {
+        if (updating) {
+            androidx.compose.material3.CircularProgressIndicator(color = Color.Black, strokeWidth = 1.5.dp, modifier = Modifier.size(11.dp))
+        } else {
+            androidx.compose.material3.Icon(
+                androidx.compose.ui.res.painterResource(R.drawable.download), null, tint = Color.Black, modifier = Modifier.size(12.dp),
+            )
+        }
+        Spacer(Modifier.width(5.dp))
+        Text(
+            stringResource(if (updating) R.string.module_updating else R.string.module_update),
+            fontFamily = InterFontFamily, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color.Black, maxLines = 1,
+        )
+    }
+}
+
+// the mock's three lines beside each card, faded by how far they've come in
+@Composable
+private fun DragHandle(modifier: Modifier, visibility: () -> Float) {
     Canvas(modifier) {
         val w = 22.dp.toPx()
         val x0 = size.width - w - 2.dp.toPx()
         val gap = 7.dp.toPx()
-        val c = Color.White.copy(alpha = 0.55f)
+        val c = Color.White.copy(alpha = 0.55f * visibility().coerceIn(0f, 1f))
         for (i in -1..1) {
             val y = size.height / 2 + i * gap
             drawLine(c, Offset(x0, y), Offset(x0 + w, y), 1.6.dp.toPx(), StrokeCap.Round)

@@ -77,7 +77,14 @@ internal class MixerPass private constructor(
 
     override fun playedFrames(): Long {
         val head = track.playbackHeadPosition.toLong() and 0xffffffffL
-        if (head < lastHead) wraps += 1L shl 32
+        // usb audio hals can briefly report a smaller head position after startup or pause; only a half-range drop is a real 32-bit wrap
+        if (head < lastHead) {
+            if (lastHead - head > (1L shl 31)) {
+                wraps += 1L shl 32
+            } else {
+                return wraps + lastHead
+            }
+        }
         lastHead = head
         return wraps + head
     }
@@ -86,7 +93,12 @@ internal class MixerPass private constructor(
         runCatching { track.removeOnRoutingChangedListener(routing) }
         runCatching { audio.removeOnPreferredMixerAttributesChangedListener(mixerChanged) }
         runCatching { track.release() }
-        runCatching { audio.clearPreferredMixerAttributes(AudioOutputs.MediaAttributes, device) }
+        // the next song may have set its own mixer for this dac already, and that one isn't ours to clear
+        runCatching {
+            if (audio.getPreferredMixerAttributes(AudioOutputs.MediaAttributes, device) == mixer) {
+                audio.clearPreferredMixerAttributes(AudioOutputs.MediaAttributes, device)
+            }
+        }
     }
 
     private fun check() {
@@ -129,11 +141,12 @@ internal class MixerPass private constructor(
                 val frameBytes = channels * bits / 8
                 val minimum = AudioTrack.getMinBufferSize(rate, attr.format.channelMask, attr.format.encoding)
                 if (minimum <= 0) throw PassFailure("no track at $rate Hz ${bits}-bit")
+                // half a second queued: the player sleeps up to half of it, so a fifth of a second ran dry when a background wake-up came late
                 track = AudioTrack.Builder()
                     .setAudioAttributes(AudioOutputs.MediaAttributes)
                     .setAudioFormat(attr.format)
                     .setTransferMode(AudioTrack.MODE_STREAM)
-                    .setBufferSizeInBytes(maxOf(minimum * 2, rate / 5 * frameBytes))
+                    .setBufferSizeInBytes(maxOf(minimum * 2, rate / 2 * frameBytes))
                     .build()
                 if (track.state != AudioTrack.STATE_INITIALIZED || !track.setPreferredDevice(device) ||
                     track.sampleRate != rate || track.audioFormat != attr.format.encoding || track.channelCount != channels

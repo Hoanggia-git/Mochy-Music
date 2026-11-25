@@ -51,6 +51,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -126,21 +127,15 @@ import com.music.innertube.models.SongItem
 import com.music.innertube.models.WatchEndpoint
 import com.music.innertube.models.YTItem
 
-private val SmallLineStyle = TextStyle(
-    fontFamily = InterFontFamily,
-    fontWeight = FontWeight.Bold,
-    fontSize = 26.sp,
-    lineHeight = 28.sp,
-    letterSpacing = PlaylistTracking,
+private val SmallLineStyleCache = com.mochyy.mochymusic.ui.theme.subheadingTextStyle(
+    TextStyle(fontWeight = FontWeight.Bold, fontSize = 26.sp, lineHeight = 28.sp, letterSpacing = PlaylistTracking),
 )
+private val SmallLineStyle: TextStyle get() = SmallLineStyleCache.current()
 
-private val BigLineStyle = TextStyle(
-    fontFamily = InterFontFamily,
-    fontWeight = FontWeight.Bold,
-    fontSize = 44.sp,
-    lineHeight = 46.sp,
-    letterSpacing = (-0.07).em,
+private val BigLineStyleCache = com.mochyy.mochymusic.ui.theme.headingTextStyle(
+    TextStyle(fontWeight = FontWeight.Bold, fontSize = 44.sp, lineHeight = 46.sp, letterSpacing = (-0.07).em),
 )
+private val BigLineStyle: TextStyle get() = BigLineStyleCache.current()
 
 private val TallCardShape = RoundedCornerShape(20.dp)
 
@@ -158,9 +153,9 @@ internal fun SimilarPage(
     groups: SimilarGroups?,
     deepLoading: Boolean,
     artistsTitle: String,
-    playlistsTitle: String = "Featured Playlist",
-    songsTitle: String = "Featured songs",
-    albumsTitle: String = "New from them",
+    playlistsTitle: String = stringResource(R.string.supplemental_featured_playlist),
+    songsTitle: String = stringResource(R.string.supplemental_featured_songs),
+    albumsTitle: String = stringResource(R.string.supplemental_artist_new_releases),
 ) {
     val playerConnection = LocalPlayerConnection.current ?: return
     val menuState = LocalMenuState.current
@@ -346,6 +341,7 @@ internal fun SimilarPage(
                                 modifier = Modifier.revealOnAppear(key = "albums", seenState = revealSeen),
                             ) {
                                 items(groups.albums, key = { it.id }) { album ->
+                                    val active = album.id == mediaMetadata?.album?.id
                                     HomeCoverCard(
                                         title = album.title,
                                         subtitle = listOfNotNull(
@@ -354,8 +350,8 @@ internal fun SimilarPage(
                                         ).joinToString(" · ").ifBlank { null },
                                         thumbnailUrl = album.thumbnail,
                                         sharedElementKey = "album-${album.id}",
-                                        isActive = album.id == mediaMetadata?.album?.id,
-                                        isPlaying = isPlaying,
+                                        isActive = active,
+                                        isPlaying = active && isPlaying,
                                         modifier = Modifier.combinedClickable(
                                             interactionSource = null,
                                             indication = HomeCardHighlight,
@@ -373,7 +369,7 @@ internal fun SimilarPage(
                     ) {
                         item(key = "empty") {
                             Text(
-                                text = "Nothing to show here yet",
+                                text = stringResource(R.string.supplemental_nothing_here),
                                 style = TrackSubtitleStyle.copy(fontSize = 13.sp),
                                 color = Color.White.copy(alpha = 0.6f),
                                 modifier = Modifier.padding(horizontal = PlaylistInset, vertical = 28.dp),
@@ -487,7 +483,7 @@ internal fun StartOfTheLine(modifier: Modifier = Modifier) {
     ) {
         ReceiptLine()
         Text(
-            text = "START OF THE LINE",
+            text = stringResource(R.string.supplemental_start_of_line),
             style = ReceiptCenterStyle,
             color = Color.White.copy(alpha = 0.78f),
             maxLines = 1,
@@ -622,13 +618,14 @@ internal fun PagedSongGrid(
     ) {
         items(items = songs, key = { it.id }) { song ->
             Box(modifier = Modifier.width(columnWidth)) {
+                val active = song.id == activeId
                 HomeTrackRow(
                     thumbnailUrl = song.thumbnail,
                     songId = song.id,
                     title = song.title,
                     subtitle = song.artists.joinToString { it.name },
-                    isActive = song.id == activeId,
-                    isPlaying = isPlaying,
+                    isActive = active,
+                    isPlaying = active && isPlaying,
                     onClick = { onClick(song) },
                     onLongClick = { onMenu(song) },
                     onMoreClick = { onMenu(song) },

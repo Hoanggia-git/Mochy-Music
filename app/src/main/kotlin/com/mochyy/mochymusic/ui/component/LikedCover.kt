@@ -86,6 +86,7 @@ object LikedCoverColors {
                     .data(url)
                     .size(112, 112)
                     .allowHardware(false)
+                    .memoryCachePolicy(coil3.request.CachePolicy.DISABLED)
                     .build()
                 val bitmap = context.imageLoader.execute(request).image?.toBitmap() ?: return@withContext null
                 val argb = withContext(Dispatchers.Default) {
@@ -180,9 +181,11 @@ fun LikedCover(
 // the cover's gradients for one size and set of colours, so the live cover and its saved picture are drawn the same
 private class LikedCoverPaints(corners: List<Color>, width: Float, height: Float) {
     // the four averaged, under everything, so no corner of it is ever left bare
-    private val base = corners.fold(0 to Color.Transparent) { (n, acc), c ->
-        (n + 1) to Color(ColorUtils.blendARGB(acc.toArgb(), c.toArgb(), 1f / (n + 1)))
-    }.second.toArgb()
+    private val base = android.graphics.Paint().apply {
+        color = corners.fold(0 to Color.Transparent) { (n, acc), c ->
+            (n + 1) to Color(ColorUtils.blendARGB(acc.toArgb(), c.toArgb(), 1f / (n + 1)))
+        }.second.toArgb()
+    }
 
     // dithered: a soft blend this wide bands on 8-bit screens otherwise
     private val corners = corners.mapIndexed { i, c ->
@@ -213,7 +216,8 @@ private class LikedCoverPaints(corners: List<Color>, width: Float, height: Float
     }
 
     fun draw(canvas: android.graphics.Canvas, width: Float, height: Float) {
-        canvas.drawColor(base)
+        // a rect, not drawColor: that fills the whole clip, and on the liked page nothing clips the cover, so it greyed the screen under the songs
+        canvas.drawRect(0f, 0f, width, height, base)
         corners.forEach { canvas.drawRect(0f, 0f, width, height, it) }
         canvas.drawRect(0f, 0f, width, height, shade)
     }

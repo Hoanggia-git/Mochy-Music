@@ -25,9 +25,13 @@ import com.mochyy.mochymusic.lyrics.VideoLyricsSync
 import com.mochyy.mochymusic.extensions.getCurrentQueueIndex
 import com.mochyy.mochymusic.extensions.getQueueWindows
 import com.mochyy.mochymusic.extensions.isAutoplay
+import com.mochyy.mochymusic.extensions.isManualQueued
 import com.mochyy.mochymusic.extensions.withAutoplay
 import com.mochyy.mochymusic.extensions.metadata
+import com.mochyy.mochymusic.models.MediaMetadata
+import com.mochyy.mochymusic.songedit.SongEdits
 import com.mochyy.mochymusic.playback.MusicService.MusicBinder
+import com.mochyy.mochymusic.link.isTelevision
 import com.mochyy.mochymusic.playback.queues.Queue
 import com.mochyy.mochymusic.utils.NotRecommended
 import com.mochyy.mochymusic.utils.reportException
@@ -70,6 +74,8 @@ class PlayerConnection(
         CoroutineScope(parentScope.coroutineContext + SupervisorJob(parentScope.coroutineContext[Job]))
 
     val service = binder.service
+    // mainactivity turns this off while the app is hidden, the poll and lyric warmers below rest then instead of working for nobody
+    val isUiVisible = MutableStateFlow(true)
     private val playerReadinessFlow = service.isPlayerReady
 
     private fun getPlayerSafe(): ExoPlayer {
@@ -140,7 +146,72 @@ class PlayerConnection(
         player.playbackState != STATE_ENDED && player.playWhenReady
     )
 
-    val mediaMetadata = MutableStateFlow(player.currentMetadata)
+    val effectivePlaybackState: StateFlow<Int> = combine(
+        playbackState,
+        service.castConnectionHandler?.isCasting ?: MutableStateFlow(false),
+        service.castConnectionHandler?.castIsBuffering ?: MutableStateFlow(false),
+    ) { localState, casting, castBuffering ->
+        if (casting) {
+            if (castBuffering) Player.STATE_BUFFERING else Player.STATE_READY
+        } else {
+            localState
+        }
+    }.stateIn(scope, SharingStarted.Lazily, player.playbackState)
+
+    /** Current playback position in ms, following the cast receiver while casting. */
+    val effectivePositionMs: Long
+        get() {
+            val cast = service.castConnectionHandler
+            if (cast?.isCasting?.value == true) return cast.currentPositionNow().coerceAtLeast(0L)
+            return attachedPlayer?.currentPosition?.coerceAtLeast(0L) ?: 0L
+        }
+
+    /** Current track duration in ms, following the cast receiver (or track metadata) while casting. */
+    val effectiveDurationMs: Long
+        get() {
+            val cast = service.castConnectionHandler
+            if (cast?.isCasting?.value == true) {
+                val castDur = cast.castDuration.value
+                if (castDur > 0L) return castDur
+                val metaDur = mediaMetadata.value?.duration?.toLong()?.times(1000L) ?: 0L
+                if (metaDur > 0L) return metaDur
+            }
+            val localDur = attachedPlayer?.duration ?: C.TIME_UNSET
+            if (localDur != C.TIME_UNSET && localDur > 0L) return localDur
+            return (mediaMetadata.value?.duration?.toLong()?.times(1000L) ?: 0L).coerceAtLeast(0L)
+        }
+
+    /** Whether playback is actively advancing right now (not paused, not buffering). */
+    val isEffectivelyPlayingNow: Boolean
+        get() {
+            val cast = service.castConnectionHandler
+            if (cast?.isCasting?.value == true) {
+                return cast.castIsPlaying.value && !cast.castIsBuffering.value
+            }
+            return attachedPlayer?.isPlaying == true
+        }
+
+    val effectivePlaybackSpeed: Float
+        get() {
+            val cast = service.castConnectionHandler
+            if (cast?.isCasting?.value == true) return 1f
+            return attachedPlayer?.playbackParameters?.speed ?: 1f
+        }
+
+    // the queue's own copy of the playing song, before the hand edits from its edit sheet go over it
+    @Volatile private var queueMetadata: MediaMetadata? = player.currentMetadata
+    val mediaMetadata = MutableStateFlow(queueMetadata?.let(SongEdits::applyTo))
+
+    init {
+        // a song edited while it's already in the queue shows the edit straight away
+        scope.launch { SongEdits.all.collect { mediaMetadata.value = queueMetadata?.let(SongEdits::applyTo) } }
+    }
+
+    private fun showMetadata(metadata: MediaMetadata?) {
+        queueMetadata = metadata
+        mediaMetadata.value = metadata?.let(SongEdits::applyTo)
+    }
+
     val currentSong =
         mediaMetadata.flatMapLatest {
             database.song(it?.id)
@@ -160,14 +231,21 @@ class PlayerConnection(
     }
 
     init {
-        // parse off the main thread, or the first frames of opening the player pay for it
+        // parse off the main thread only while the ui is visible, so background song changes stay quiet
         scope.launch(kotlinx.coroutines.Dispatchers.Default) {
-            currentLyrics.map { it?.lyrics }.distinctUntilChanged().collect(LyricsUtils::warmParsedLyrics)
+            isUiVisible
+                .flatMapLatest { visible ->
+                    if (visible) currentLyrics.map { it?.lyrics }.distinctUntilChanged() else kotlinx.coroutines.flow.emptyFlow()
+                }
+                .collect(LyricsUtils::warmParsedLyrics)
         }
         // a music video shows its lyrics straight away, then they move onto the video's own timing once it's been listened to
         scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            combine(mediaMetadata, currentLyrics) { metadata, lyrics -> metadata to lyrics }
-                .distinctUntilChanged()
+            isUiVisible
+                .flatMapLatest { visible ->
+                    if (visible) combine(mediaMetadata, currentLyrics) { metadata, lyrics -> metadata to lyrics }.distinctUntilChanged()
+                    else kotlinx.coroutines.flow.emptyFlow()
+                }
                 .collectLatest { (metadata, lyrics) ->
                     if (metadata == null || lyrics == null) return@collectLatest
                     // a song skipped straight past never asks youtube anything
@@ -209,10 +287,6 @@ class PlayerConnection(
     val currentMediaItemIndex = MutableStateFlow(-1)
     val currentWindowIndex = MutableStateFlow(-1)
 
-    val queueItems: kotlinx.coroutines.flow.StateFlow<List<com.mochyy.mochymusic.ui.player.models.QueueItemData>> = queueWindows.map { windows ->
-        windows.map(::toQueueItem)
-    }.distinctUntilChanged().stateIn(scope, SharingStarted.Lazily, emptyList())
-
     /**
      * The queue's items and the current song's position in them, published as one value from the
      * same player callback. queueItems and currentWindowIndex arrive separately (one goes through
@@ -220,6 +294,11 @@ class PlayerConnection(
      * list for a frame whenever both changed at once - clearing history, toggling shuffle.
      */
     val queueSnapshot = MutableStateFlow(com.mochyy.mochymusic.ui.player.models.QueueState())
+    // reuse snapshot items instead of mapping a second copy of the whole queue
+    val queueItems: kotlinx.coroutines.flow.StateFlow<List<com.mochyy.mochymusic.ui.player.models.QueueItemData>> = queueSnapshot
+        .map { it.items }
+        .distinctUntilChanged()
+        .stateIn(scope, SharingStarted.WhileSubscribed(5_000L), emptyList())
     private var snapshotWindows: List<Timeline.Window>? = null
     private var snapshotItems: List<com.mochyy.mochymusic.ui.player.models.QueueItemData> = emptyList()
 
@@ -233,6 +312,7 @@ class PlayerConnection(
             artworkUri = mediaItem.mediaMetadata.artworkUri,
             duration = window.durationMs,
             isAutoplay = mediaItem.isAutoplay,
+            isManual = mediaItem.isManualQueued,
         )
     }
 
@@ -250,32 +330,52 @@ class PlayerConnection(
         )
     }
 
-    // mainactivity turns this off while the app is hidden, the poll below rests then instead of recomposing the player for nobody
-    val isUiVisible = MutableStateFlow(true)
+    // nudged by player callbacks so the position poller sleeps with zero wakeups while paused
+    private val progressNudge = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 1)
 
     val progressState: kotlinx.coroutines.flow.StateFlow<com.mochyy.mochymusic.ui.player.models.ProgressState> =
         kotlinx.coroutines.flow.callbackFlow {
             while (true) {
                 isUiVisible.first { it }
+                var moving = false
                 try {
-                    val p = attachedPlayer
-                    if (p != null) {
-                        val position = p.currentPosition.coerceAtLeast(0L)
-                        val duration = p.duration.coerceAtLeast(0L)
+                    val cast = service.castConnectionHandler
+                    if (cast?.isCasting?.value == true) {
+                        val position = cast.currentPositionNow().coerceAtLeast(0L)
+                        val duration = effectiveDurationMs
+                        moving = cast.castIsPlaying.value || cast.castIsBuffering.value
                         trySend(
                             com.mochyy.mochymusic.ui.player.models.ProgressState(
                                 position = position,
                                 duration = duration,
-                                percentage = if (duration > 0L) position.toFloat() / duration else 0f,
+                                percentage = if (duration > 0L) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f,
                             )
                         )
+                    } else {
+                        val p = attachedPlayer
+                        if (p != null) {
+                            val position = p.currentPosition.coerceAtLeast(0L)
+                            val duration = p.duration.coerceAtLeast(0L)
+                            moving = p.isPlaying || p.playbackState == Player.STATE_BUFFERING
+                            trySend(
+                                com.mochyy.mochymusic.ui.player.models.ProgressState(
+                                    position = position,
+                                    duration = duration,
+                                    percentage = if (duration > 0L) position.toFloat() / duration else 0f,
+                                )
+                            )
+                        }
                     }
                 } catch (_: Exception) {}
-                kotlinx.coroutines.delay(66L)
+                if (moving) {
+                    kotlinx.coroutines.delay(66L)
+                } else {
+                    progressNudge.first()
+                }
             }
         }.distinctUntilChanged().stateIn(
             scope,
-            SharingStarted.Lazily,
+            SharingStarted.WhileSubscribed(5_000L),
             com.mochyy.mochymusic.ui.player.models.ProgressState(),
         )
 
@@ -308,6 +408,31 @@ class PlayerConnection(
 
     fun testCrossmix() = service.testCrossmix()
 
+    /** Live dual-player preview state for the Mix It Transition Editor */
+    val mixItPreviewState: StateFlow<MixItPreviewState> = service.mixItPreviewState
+
+    fun startMixItPreview(
+        outItem: MediaItem,
+        inItem: MediaItem,
+        transition: com.mochyy.mochymusic.db.entities.PlaylistTransition,
+        outDurationMs: Long,
+        inDurationMs: Long,
+        outAnalysis: com.mochyy.mochymusic.crossmix.TrackAnalysis?,
+        inAnalysis: com.mochyy.mochymusic.crossmix.TrackAnalysis?,
+    ) = service.startMixItPreview(outItem, inItem, transition, outDurationMs, inDurationMs, outAnalysis, inAnalysis)
+
+    fun stopMixItPreview() = service.stopMixItPreview()
+
+    suspend fun analyzeTrackForMixIt(item: MediaItem): com.mochyy.mochymusic.crossmix.TrackAnalysis? =
+        service.analyzeTrackForMixIt(item)
+
+    fun cachedTrackAnalysis(mediaId: String): com.mochyy.mochymusic.crossmix.TrackAnalysis? =
+        service.cachedTrackAnalysis(mediaId)
+
+    suspend fun fetchLyricsForMixIt(item: MediaItem): String? = service.fetchLyricsForMixIt(item)
+
+    fun notifyMixItChanged(playlistId: String) = service.notifyMixItChanged(playlistId)
+
     var onSkipPrevious: (() -> Unit)? = null
     var onSkipNext: (() -> Unit)? = null
 
@@ -328,6 +453,21 @@ class PlayerConnection(
                  updateAttachedPlayer(player)
             }
 
+            // wake the progress poller whenever cast playback starts, pauses, buffers, seeks or changes duration
+            service.castConnectionHandler?.let { cast ->
+                scope.launch {
+                    combine(
+                        cast.isCasting,
+                        cast.castIsPlaying,
+                        cast.castIsBuffering,
+                        cast.castDuration,
+                        cast.castPosition,
+                    ) { _, _, _, _, _ -> }.collect {
+                        progressNudge.tryEmit(Unit)
+                    }
+                }
+            }
+
             Timber.tag(TAG).d("PlayerConnection flow observer registered")
         } catch (e: Exception) {
             Timber.tag(TAG).e(e, "Failed to initialize PlayerConnection listener or state")
@@ -343,7 +483,7 @@ class PlayerConnection(
 
         playbackState.value = newPlayer.playbackState
         playWhenReady.value = newPlayer.playWhenReady
-        mediaMetadata.value = newPlayer.currentMetadata
+        showMetadata(newPlayer.currentMetadata)
         queueTitle.value = service.queueTitle
         queueWindows.value = newPlayer.getQueueWindows()
         currentWindowIndex.value = newPlayer.getCurrentQueueIndex()
@@ -351,11 +491,22 @@ class PlayerConnection(
         shuffleModeEnabled.value = newPlayer.shuffleModeEnabled
         repeatMode.value = newPlayer.repeatMode
         publishQueueSnapshot()
+        progressNudge.tryEmit(Unit)
 
         Timber.tag(TAG).d("Attached to new player instance: $newPlayer")
     }
 
+    // a device this phone steers takes the songs picked here; never on a tv, which steers nothing
+    private val remote: com.mochyy.mochymusic.link.remote.RemoteControl? by lazy {
+        if (context.isTelevision()) null
+        else dagger.hilt.android.EntryPointAccessors.fromApplication(
+            context.applicationContext,
+            com.mochyy.mochymusic.link.remote.RemoteControlEntryPoint::class.java,
+        ).remoteControl()
+    }
+
     fun playQueue(queue: Queue) {
+        if (remote?.takeQueue(queue) == true) return
         if (!playerReadinessFlow.value) {
             Timber.tag(TAG).w("playQueue called before player ready; delegating to service")
         }
@@ -385,7 +536,7 @@ class PlayerConnection(
     fun playNext(item: MediaItem) = playNext(listOf(item))
 
     fun playNext(items: List<MediaItem>) {
-
+        if (remote?.takeNext(items) == true) return
         try {
             service.playNext(items)
         } catch (e: Exception) {
@@ -397,7 +548,7 @@ class PlayerConnection(
     fun addToQueue(item: MediaItem) = addToQueue(listOf(item))
 
     fun addToQueue(items: List<MediaItem>) {
-
+        if (remote?.takeQueueEnd(items) == true) return
         try {
             service.addToQueue(items)
         } catch (e: Exception) {
@@ -439,15 +590,11 @@ class PlayerConnection(
         return order
     }
 
+    // a tap in the queue is picked like a song from a list, or blended in; the uid is looked up again when the song really changes
     fun playQueueItem(uid: Int) {
-        val index = mediaIndexOf(uid)
-        if (index == C.INDEX_UNSET) return
+        if (mediaIndexOf(uid) == C.INDEX_UNSET) return
         try {
-            player.seekToDefaultPosition(index)
-            if (player.playbackState == Player.STATE_IDLE || player.playbackState == STATE_ENDED) {
-                player.prepare()
-            }
-            player.playWhenReady = true
+            service.transport.pickFromQueue { mediaIndexOf(uid) }
         } catch (e: Exception) {
             Timber.tag(TAG).e(e, "Error in playQueueItem")
         }
@@ -618,6 +765,7 @@ class PlayerConnection(
                 service.transport.cancel()
                 player.seekTo(position)
             }
+            progressNudge.tryEmit(Unit)
         } catch (e: Exception) {
             Timber.tag(TAG).e(e, "Error in seekTo")
         }
@@ -640,12 +788,32 @@ class PlayerConnection(
 
     var onRestartSong: (() -> Unit)? = null
 
+    // a swipe back: always the song before, never a restart, faded or blended like a skip
+    fun skipToPreviousSong() {
+        try {
+            val castHandler = service.castConnectionHandler
+            if (castHandler?.isCasting?.value == true) {
+                castHandler.skipToPrevious()
+                return
+            }
+            service.transport.jumpTo { player.previousMediaItemIndex }
+        } catch (e: Exception) {
+            Timber.tag(TAG).e(e, "Error in skipToPreviousSong")
+        }
+    }
+
     fun seekToPrevious() {
         try {
 
             val castHandler = service.castConnectionHandler
             if (castHandler?.isCasting?.value == true) {
-                castHandler.skipToPrevious()
+                if (effectivePositionMs > 3000L || !player.hasPreviousMediaItem()) {
+                    castHandler.seekTo(0L)
+                    progressNudge.tryEmit(Unit)
+                    onRestartSong?.invoke()
+                } else {
+                    castHandler.skipToPrevious()
+                }
                 return
             }
 
@@ -660,6 +828,7 @@ class PlayerConnection(
     override fun onPlaybackStateChanged(state: Int) {
         playbackState.value = state
         error.value = player.playerError
+        progressNudge.tryEmit(Unit)
     }
 
     override fun onPlayWhenReadyChanged(
@@ -667,17 +836,31 @@ class PlayerConnection(
         reason: Int,
     ) {
         playWhenReady.value = newPlayWhenReady
+        progressNudge.tryEmit(Unit)
+    }
+
+    override fun onIsPlayingChanged(isPlaying: Boolean) {
+        progressNudge.tryEmit(Unit)
+    }
+
+    override fun onPositionDiscontinuity(
+        oldPosition: Player.PositionInfo,
+        newPosition: Player.PositionInfo,
+        reason: Int,
+    ) {
+        progressNudge.tryEmit(Unit)
     }
 
     override fun onMediaItemTransition(
         mediaItem: MediaItem?,
         reason: Int,
     ) {
-        mediaMetadata.value = mediaItem?.metadata
+        showMetadata(mediaItem?.metadata)
         currentMediaItemIndex.value = player.currentMediaItemIndex
         currentWindowIndex.value = player.getCurrentQueueIndex()
         publishQueueSnapshot()
         updateCanSkipPreviousAndNext()
+        progressNudge.tryEmit(Unit)
     }
 
     override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
@@ -724,16 +907,16 @@ class PlayerConnection(
                 if (songEntity.song.isLocal &&
                     (thumbnailUrl == null || com.mochyy.mochymusic.importer.LocalArtwork.needsRepair(context, thumbnailUrl))
                 ) {
-                    val newThumbnailUrl = com.mochyy.mochymusic.importer.LocalArtwork.save(context, mediaItem.mediaId, artworkData)
+                    val newThumbnailUrl = com.mochyy.mochymusic.importer.LocalArtwork.save(context, artworkData)
                         ?: return@launch
                     database.query {
                         upsert(songEntity.song.copy(thumbnailUrl = newThumbnailUrl))
                     }
                     Timber.tag(TAG).d("Extracted local artwork to $newThumbnailUrl")
 
-                    val currentMetadata = this@PlayerConnection.mediaMetadata.value
+                    val currentMetadata = queueMetadata
                     if (currentMetadata?.id == mediaItem.mediaId) {
-                        this@PlayerConnection.mediaMetadata.value = currentMetadata.copy(thumbnailUrl = newThumbnailUrl)
+                        showMetadata(currentMetadata.copy(thumbnailUrl = newThumbnailUrl))
                     }
                 }
             } catch (e: Exception) {
@@ -752,6 +935,7 @@ class PlayerConnection(
         currentWindowIndex.value = player.getCurrentQueueIndex()
         publishQueueSnapshot()
         updateCanSkipPreviousAndNext()
+        progressNudge.tryEmit(Unit)
     }
 
     override fun onShuffleModeEnabledChanged(enabled: Boolean) {
@@ -760,6 +944,7 @@ class PlayerConnection(
         currentWindowIndex.value = player.getCurrentQueueIndex()
         publishQueueSnapshot()
         updateCanSkipPreviousAndNext()
+        progressNudge.tryEmit(Unit)
     }
 
     override fun onRepeatModeChanged(mode: Int) {

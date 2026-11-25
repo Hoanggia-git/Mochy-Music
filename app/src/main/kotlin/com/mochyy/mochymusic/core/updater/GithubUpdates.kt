@@ -36,6 +36,8 @@ data class GithubRelease(
     val apkName: String?,
     val apkSizeBytes: Long,
     val publishedAt: String,
+    // marked as a prerelease on github, which is what makes it a nightly
+    val isNightly: Boolean = false,
 )
 
 sealed interface UpdateState {
@@ -45,33 +47,39 @@ sealed interface UpdateState {
     data class Failed(val message: String) : UpdateState
 }
 
+// a release is x.y.z, a nightly adds a fourth number counting up from the release it was built on (8.3.2.1, 8.3.2.2, then 8.3.3)
 data class FullVersion(
     val major: Int = 0,
     val minor: Int = 0,
     val patch: Int = 0,
-    val buildNumber: Int = 0
+    val buildNumber: Int = 0,
+    val nightly: Int = 0,
 ) : Comparable<FullVersion> {
     override fun compareTo(other: FullVersion): Int {
         if (major != other.major) return major.compareTo(other.major)
         if (minor != other.minor) return minor.compareTo(other.minor)
         if (patch != other.patch) return patch.compareTo(other.patch)
+        if (nightly != other.nightly) return nightly.compareTo(other.nightly)
         return buildNumber.compareTo(other.buildNumber)
     }
+
+    // what people read: 8.3.2, 8.3.2.4 for a nightly
+    val name: String get() = if (nightly > 0) "$major.$minor.$patch.$nightly" else "$major.$minor.$patch"
 }
 
+private val VersionRegex = Regex("""(\d+)\.(\d+)(?:\.(\d+))?(?:\.(\d+))?""")
+private val BuildNumberRegex = Regex("""(?:build#|\(#|#|\()(\d+)\)?""", RegexOption.IGNORE_CASE)
+
 fun parseFullVersion(text: String): FullVersion {
-    val semverRegex = Regex("""(\d+)\.(\d+)(?:\.(\d+))?""")
-    val buildNumRegex = Regex("""(?:build#|\(#|#|\()(\d+)\)?""", RegexOption.IGNORE_CASE)
-
-    val semverMatch = semverRegex.find(text)
-    val major = semverMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
-    val minor = semverMatch?.groupValues?.get(2)?.toIntOrNull() ?: 0
-    val patch = semverMatch?.groupValues?.getOrNull(3)?.toIntOrNull() ?: 0
-
-    val buildMatch = buildNumRegex.find(text)
-    val buildNumber = buildMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
-
-    return FullVersion(major, minor, patch, buildNumber)
+    val version = VersionRegex.find(text)?.groupValues
+    val buildNumber = BuildNumberRegex.find(text)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+    return FullVersion(
+        major = version?.get(1)?.toIntOrNull() ?: 0,
+        minor = version?.get(2)?.toIntOrNull() ?: 0,
+        patch = version?.getOrNull(3)?.toIntOrNull() ?: 0,
+        buildNumber = buildNumber,
+        nightly = version?.getOrNull(4)?.toIntOrNull() ?: 0,
+    )
 }
 
 private const val CacheTtlMillis = 15L * 60L * 1000L
@@ -114,18 +122,27 @@ private suspend fun getReleases(force: Boolean): Result<List<ParsedRelease>> {
     return result
 }
 
-/** The newest release, whatever is installed. */
-suspend fun getLatestRelease(force: Boolean = false): Result<GithubRelease?> =
-    getReleases(force).map { list -> list.maxByOrNull { it.version }?.release }
+// release only sees releases; nightly sees the prereleases and the releases, and takes the newest of all
+private fun ParsedRelease.inChannel(channel: UpdateChannel) = channel == UpdateChannel.Nightly || !release.isNightly
+
+/** The newest release on [channel], whatever is installed. */
+suspend fun getLatestRelease(channel: UpdateChannel, force: Boolean = false): Result<GithubRelease?> =
+    getReleases(force).map { list -> list.filter { it.inChannel(channel) }.maxByOrNull { it.version }?.release }
 
 /**
- * The newest release from before the installed version (by its x.y.z, so an older build of the
- * same version doesn't count). What "Downgrade to" offers; null when there is none.
+ * What "Downgrade to" offers, null when there's none: on release, the newest release before the
+ * installed x.y.z (an older build of the same version doesn't count); on nightly, the nightly before
+ * this one. A nightly never steps down to a release, that can break the library.
  */
-suspend fun getPreviousRelease(force: Boolean = false): Result<GithubRelease?> {
+suspend fun getPreviousRelease(channel: UpdateChannel, force: Boolean = false): Result<GithubRelease?> {
     val installed = parseFullVersion(BuildConfig.VERSION_NAME).copy(buildNumber = 0)
     return getReleases(force).map { list ->
-        list.filter { it.version.copy(buildNumber = 0) < installed }.maxByOrNull { it.version }?.release
+        when {
+            channel == UpdateChannel.Release && installedIsNightly -> null
+            channel == UpdateChannel.Release -> list.filter { !it.release.isNightly && it.version.copy(buildNumber = 0) < installed }
+            !installedIsNightly -> null
+            else -> list.filter { it.release.isNightly && it.version.copy(buildNumber = 0) < installed }
+        }?.maxByOrNull { it.version }?.release
     }
 }
 
@@ -153,11 +170,7 @@ private suspend fun fetchReleases(): Result<List<ParsedRelease>> = withContext(D
                 if (fullVer.major == 0 && fullVer.minor == 0 && fullVer.patch == 0) continue
                 if (fullVer.copy(buildNumber = 0) < FirstReleaseWithThisId) continue
 
-                val displayVersion = if (fullVer.buildNumber > 0) {
-                    "${fullVer.major}.${fullVer.minor}.${fullVer.patch} (${fullVer.buildNumber})"
-                } else {
-                    "${fullVer.major}.${fullVer.minor}.${fullVer.patch}"
-                }
+                val displayVersion = if (fullVer.buildNumber > 0) "${fullVer.name} (${fullVer.buildNumber})" else fullVer.name
 
                 val assets = release.optJSONArray("assets")
                 var selectedUrl: String? = null
@@ -217,6 +230,7 @@ private suspend fun fetchReleases(): Result<List<ParsedRelease>> = withContext(D
                             apkName = apkName,
                             apkSizeBytes = apkSize,
                             publishedAt = release.optString("published_at").orEmpty(),
+                            isNightly = release.optBoolean("prerelease", false),
                         ),
                     ),
                 )
@@ -240,34 +254,51 @@ suspend fun downloadApk(
         val url = release.apkUrl ?: error("This release has no APK attached")
         val target = apkFileFor(context, release)
 
-        if (isDownloaded(context, release)) {
+        if (isDownloaded(context, release) && ApkVerifier.verifyUpdateApk(context, target)) {
             onProgress(1f)
             return@runCatching target
         }
         if (target.exists()) target.delete()
 
-        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-            connectTimeout = 15_000
-            readTimeout = 30_000
-            instanceFollowRedirects = true
-            setRequestProperty("User-Agent", "mochy-android")
-        }
-        val total = release.apkSizeBytes.takeIf { it > 0 }
-            ?: connection.contentLengthLong.takeIf { it > 0 }
-            ?: -1L
+        val temp = File(target.parentFile, "${target.name}.part")
+        if (temp.exists()) temp.delete()
 
-        connection.inputStream.use { input ->
-            target.outputStream().use { output ->
-                val buffer = ByteArray(64 * 1024)
-                var written = 0L
-                while (true) {
-                    val read = input.read(buffer)
-                    if (read == -1) break
-                    output.write(buffer, 0, read)
-                    written += read
-                    if (total > 0) onProgress((written.toFloat() / total).coerceIn(0f, 1f))
+        val connection = ApkVerifier.openVerifiedConnection(url, allowNightlyLink = false)
+        try {
+            val declaredTotal = release.apkSizeBytes.takeIf { it > 0 }
+                ?: connection.contentLengthLong.takeIf { it > 0 }
+                ?: -1L
+            if (declaredTotal > ApkVerifier.MaxApkBytes) {
+                error("Update APK exceeds maximum allowed size")
+            }
+
+            connection.inputStream.use { input ->
+                temp.outputStream().use { output ->
+                    val buffer = ByteArray(64 * 1024)
+                    var written = 0L
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read == -1) break
+                        written += read
+                        if (written > ApkVerifier.MaxApkBytes) {
+                            error("Update APK exceeded maximum allowed size")
+                        }
+                        output.write(buffer, 0, read)
+                        if (declaredTotal > 0) onProgress((written.toFloat() / declaredTotal).coerceIn(0f, 1f))
+                    }
                 }
             }
+        } finally {
+            connection.disconnect()
+        }
+
+        if (!temp.renameTo(target)) {
+            temp.copyTo(target, overwrite = true)
+            temp.delete()
+        }
+        if (!ApkVerifier.verifyUpdateApk(context, target)) {
+            target.delete()
+            error("Update APK signature verification failed")
         }
         onProgress(1f)
         target
@@ -275,12 +306,13 @@ suspend fun downloadApk(
 }
 
 fun apkFileFor(context: Context, release: GithubRelease): File =
-    File(context.cacheDir, release.apkName ?: "mochy-update.apk")
+    ApkVerifier.safeApkFile(context, release.apkName)
 
 fun isDownloaded(context: Context, release: GithubRelease): Boolean {
     val f = apkFileFor(context, release)
     if (!f.exists() || f.length() <= 0L) return false
-    return release.apkSizeBytes <= 0L || f.length() == release.apkSizeBytes
+    val sizeMatches = release.apkSizeBytes <= 0L || f.length() == release.apkSizeBytes
+    return sizeMatches && ApkVerifier.verifyUpdateApk(context, f)
 }
 
 fun canInstallPackages(context: Context): Boolean =
@@ -288,17 +320,23 @@ fun canInstallPackages(context: Context): Boolean =
         context.packageManager.canRequestPackageInstalls()
 
 fun requestInstallPermission(context: Context) {
-    runCatching {
-        context.startActivity(
-            Intent(
-                android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                android.net.Uri.parse("package:" + context.packageName),
-            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        )
+    // many tv boxes have no page for one app, so it falls back to the whole list, then security, then settings
+    val pages = listOf(
+        Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, android.net.Uri.parse("package:" + context.packageName)),
+        Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES),
+        Intent(android.provider.Settings.ACTION_SECURITY_SETTINGS),
+        Intent(android.provider.Settings.ACTION_SETTINGS),
+    )
+    pages.firstOrNull { page ->
+        runCatching { context.startActivity(page.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }.isSuccess
     }
 }
 
 fun installApk(context: Context, apk: File): Boolean {
+    if (!ApkVerifier.verifyUpdateApk(context, apk)) {
+        runCatching { apk.delete() }
+        return false
+    }
     if (!canInstallPackages(context)) {
         requestInstallPermission(context)
         return false

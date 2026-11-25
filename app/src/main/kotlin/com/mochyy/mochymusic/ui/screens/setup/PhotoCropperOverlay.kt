@@ -17,7 +17,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.*
@@ -25,10 +24,12 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.mochyy.mochymusic.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -43,6 +44,7 @@ import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.platform.LocalDensity
 import com.mochyy.mochymusic.ui.component.backdropClick
+import com.mochyy.mochymusic.ui.component.SheetGrabber
 
 private val IMAGE_INSET = 20.dp
 private val IMAGE_CORNER = 28.dp
@@ -164,14 +166,12 @@ fun PhotoCropperContainer(
                     .background(Color(0xFF121212))
             ) {
 
-                Box(
+                // the cropper can't be pulled away, so its bar stays a line
+                SheetGrabber(
+                    bend = { 0f },
                     modifier = Modifier
                         .align(Alignment.TopCenter)
-                        .padding(top = 16.dp)
-                        .width(64.dp)
-                        .height(4.dp)
-                        .clip(CircleShape)
-                        .background(Color.White.copy(alpha = 0.5f))
+                        .padding(top = 10.dp),
                 )
 
                 Box(
@@ -255,7 +255,7 @@ fun PhotoCropperContainer(
         }
 
         Text(
-            text = "Adjust your photo profile",
+            text = stringResource(R.string.onb_adjust_photo),
             color = Color.White,
             fontWeight = FontWeight.Bold,
             fontSize = 18.sp,
@@ -281,7 +281,7 @@ fun PhotoCropperContainer(
                 .fillMaxWidth()
                 .height(48.dp)
         ) {
-            Text("Select new image", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            Text(stringResource(R.string.onb_select_new_image), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
         }
 
         Button(
@@ -329,7 +329,7 @@ fun PhotoCropperContainer(
                 .fillMaxWidth()
                 .height(48.dp)
         ) {
-            Text("Done", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            Text(stringResource(R.string.onb_done), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
         }
         }
     }

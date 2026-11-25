@@ -9,6 +9,12 @@ import com.mochyy.mochymusic.models.MediaMetadata
 interface Queue {
     val preloadItem: MediaMetadata?
 
+    // the song this queue starts on, when that's known before it's read, so a pick can fetch it while the old song still plays
+    val firstSongId: String? get() = preloadItem?.id
+
+    // its next pages are youtube's picks after what you chose (an album's radio), so they only play with autoplay on
+    val continuesAsRadio: Boolean get() = false
+
     suspend fun getInitialStatus(): Status
 
     fun hasNextPage(): Boolean

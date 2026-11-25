@@ -26,6 +26,7 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -41,13 +42,10 @@ import com.mochyy.mochymusic.ui.utils.stableStatusBars
 import com.mochyy.mochymusic.ui.component.RemoteFocus
 
 /** the player's menu item label, exactly as its chevron menu sets it */
-private val MenuLabelStyle = TextStyle(
-    fontFamily = com.mochyy.mochymusic.ui.theme.InterFontFamily,
-    fontSize = 14.sp,
-    fontWeight = FontWeight.SemiBold,
-    color = Color.White,
-    shadow = Shadow(color = Color.Black.copy(alpha = 0.75f), offset = Offset(0f, 2f), blurRadius = 8f),
+private val MenuLabelStyleCache = com.mochyy.mochymusic.ui.theme.globalTextStyle(
+    TextStyle(fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color.White, shadow = Shadow(color = Color.Black.copy(alpha = 0.75f), offset = Offset(0f, 2f), blurRadius = 8f)),
 )
+private val MenuLabelStyle: TextStyle get() = MenuLabelStyleCache.current()
 
 /**
  * Where the middle part's camera goes and where every piece ends up, laid out for this screen the
@@ -97,23 +95,28 @@ private class MiddleStage(
 
     init {
         with(density) {
+            val landscape = w > h
             val button = chevron.height.takeIf { it > 0f } ?: 34.dp.toPx()
-            zoom = (0.165f * w / button).coerceIn(1.6f, 2.4f)
+            zoom = if (landscape) {
+                (0.11f * h / button).coerceIn(1.1f, 1.55f)
+            } else {
+                (0.165f * w / button).coerceIn(1.6f, 2.4f)
+            }
             val c = zoom * button
-            val pad = 0.42f * c
+            val pad = (if (landscape) 0.30f else 0.42f) * c
             val right = 0.5f * w
             val tileRight = right + pad
-            labelX = tileRight + 0.07f * w
+            labelX = tileRight + (if (landscape) 0.04f else 0.07f) * w
 
             val menusH = c + pad * 2f
             val seekH = zoom * 8.dp.toPx() + pad * 2f
             val endH = zoom * end.height.coerceAtLeast(1f) + pad * 2f
-            var menusY = 0.592f * h
-            var seekY = menusY + menusH / 2f + 0.037f * h + seekH / 2f
-            var endY = seekY + seekH / 2f + 0.02f * h + endH / 2f
-            val overflow = (endY + endH / 2f) - (h - navBottom - 24.dp.toPx())
+            var menusY = (if (landscape) 0.36f else 0.592f) * h
+            var seekY = menusY + menusH / 2f + (if (landscape) 0.045f else 0.037f) * h + seekH / 2f
+            var endY = seekY + seekH / 2f + (if (landscape) 0.035f else 0.02f) * h + endH / 2f
+            val overflow = (endY + endH / 2f) - (h - navBottom - (if (landscape) 14.dp else 24.dp).toPx())
             if (overflow > 0f) {
-                val room = (menusY - menusH / 2f) - (statusTop + 100.dp.toPx())
+                val room = (menusY - menusH / 2f) - (statusTop + (if (landscape) 64.dp else 100.dp).toPx())
                 val up = overflow.coerceAtMost(room.coerceAtLeast(0f))
                 menusY -= up
                 seekY -= up
@@ -124,7 +127,9 @@ private class MiddleStage(
             target = Offset(right, seekY)
 
             chevronTo = Offset(right - c / 2f, menusY)
-            sideTo = Offset(chevronTo.x - (chevron.center.x - side.center.x) * zoom, menusY)
+            // in landscape like sits vertically above chevron, so place side cleanly beside chevron in the menus tile
+            val sideDx = if (landscape) c * 1.45f else (chevron.center.x - side.center.x) * zoom
+            sideTo = Offset(chevronTo.x - sideDx, menusY)
             seekTo = Offset(right - seek.width * zoom / 2f, seekY)
             endTo = Offset(right - end.width * zoom / 2f, endY)
             menusTile = Rect(sideTo.x - c / 2f - 0.32f * c, menusY - menusH / 2f, tileRight, menusY + menusH / 2f)
@@ -134,9 +139,9 @@ private class MiddleStage(
             // the menu: its items and the side button, one row each, stacked over the chevron
             var mz = zoom
             var cm = mz * button
-            var rowH = cm * 1.84f
-            val bottomEdge = h - navBottom - 0.045f * h
-            val topLimit = statusTop + 80.dp.toPx()
+            var rowH = cm * (if (landscape) 1.55f else 1.84f)
+            val bottomEdge = h - navBottom - (if (landscape) 0.03f else 0.045f) * h
+            val topLimit = statusTop + (if (landscape) 58.dp else 80.dp).toPx()
             val needed = (slots + 1) * rowH
             if (needed > bottomEdge - topLimit) {
                 mz *= (bottomEdge - topLimit) / needed
@@ -205,10 +210,11 @@ internal fun MiddleEditor(
     val measurer = rememberTextMeasurer()
     val slots = menuLayout.slots
     val sideAction = menuLayout.side
-    val labelWidths = remember(slots) {
-        FloatArray(slots.size) { i -> measurer.measure(slots[i].label, MenuLabelStyle).size.width.toFloat() }
+    val labelStyle = MenuLabelStyle
+    val labelWidths = remember(slots, measurer, labelStyle) {
+        FloatArray(slots.size) { i -> measurer.measure(slots[i].label, labelStyle).size.width.toFloat() }
     }
-    val sideLabelWidth = remember(sideAction) { measurer.measure(sideAction.label, MenuLabelStyle).size.width.toFloat() }
+    val sideLabelWidth = remember(sideAction, measurer, labelStyle) { measurer.measure(sideAction.label, labelStyle).size.width.toFloat() }
     val sideRect = anchors.sideButton.value
     val chevronRect = anchors.chevron.value
     val seekRect = anchors.seekBar.value
@@ -280,7 +286,7 @@ internal fun MiddleEditor(
                 alpha = { item(i) },
             )
             MenuItemLabel(
-                text = action.label,
+                text = stringResource(action.labelRes),
                 rightX = { stage.rowCircles[i].x - stage.menuZoom * chevronRect.width / 2f - stage.labelGap },
                 centerY = { lerpF(chevronCenter().y, stage.rowCircles[i].y, item(i)) },
                 scale = stage.labelScale,
@@ -288,7 +294,7 @@ internal fun MiddleEditor(
             )
         }
         MenuItemLabel(
-            text = sideAction.label,
+            text = stringResource(sideAction.labelRes),
             rightX = { stage.sideMenu.x - stage.menuZoom * sideRect.width / 2f - stage.labelGap },
             centerY = { stage.sideMenu.y },
             scale = stage.labelScale,
@@ -297,9 +303,9 @@ internal fun MiddleEditor(
 
         // what each tile edits
         val labelStyle = studioText(StudioType.Title, FontWeight.Bold)
-        MiddleLabel("Edit menus", labelStyle, stage.labelX, stage.menusTile.center.y) { tiles() * (1f - menu() * 2f) }
-        MiddleLabel("Edit Seekbar", labelStyle, stage.labelX, stage.seekTile.center.y) { tiles() * (1f - menu() * 2f) }
-        MiddleLabel("Edit end\ntimestamp", labelStyle, stage.labelX, stage.endTile.center.y) { tiles() * (1f - menu() * 2f) }
+        MiddleLabel(stringResource(R.string.ps_studio_edit_menus), labelStyle, stage.labelX, stage.menusTile.center.y) { tiles() * (1f - menu() * 2f) }
+        MiddleLabel(stringResource(R.string.ps_studio_edit_seekbar), labelStyle, stage.labelX, stage.seekTile.center.y) { tiles() * (1f - menu() * 2f) }
+        MiddleLabel(stringResource(R.string.ps_studio_edit_end_timestamp), labelStyle, stage.labelX, stage.endTile.center.y) { tiles() * (1f - menu() * 2f) }
 
         // taps
         TileTap(stage.menusTile.copy(right = w), stageMiddle) { studio.go(StudioStage.MENU) }

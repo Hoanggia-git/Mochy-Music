@@ -26,6 +26,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
@@ -60,6 +61,7 @@ import com.mochyy.mochymusic.ui.component.coverTintBackground
 import com.mochyy.mochymusic.ui.theme.InterFontFamily
 import com.mochyy.mochymusic.ui.utils.stableStatusBars
 import com.mochyy.mochymusic.viewmodels.ModulesViewModel
+import kotlinx.coroutines.launch
 
 private val BannerHeight = 260.dp
 
@@ -70,6 +72,7 @@ fun ModuleScreen(navController: NavController, id: String, viewModel: ModulesVie
     val context = LocalContext.current
     val overlay = LocalZoomOutOverlayState.current
     val bottom = LocalPlayerAwareWindowInsets.current.asPaddingValues().calculateBottomPadding()
+    val scope = rememberCoroutineScope()
 
     fun signIn() {
         val module = entry?.module ?: return
@@ -96,15 +99,38 @@ fun ModuleScreen(navController: NavController, id: String, viewModel: ModulesVie
                 Spacer(Modifier.height(BannerHeight))
                 return@Column
             }
-            ModuleBanner(entry)
+            ModuleBanner(entry.banner, entry.icon)
             Column(Modifier.padding(horizontal = 20.dp)) {
                 ModuleHeader(entry)
                 Spacer(Modifier.height(20.dp))
                 Box(Modifier.fillMaxWidth().padding(horizontal = 4.dp).height(1.dp).background(Color.White.copy(alpha = 0.3f)))
                 Spacer(Modifier.height(20.dp))
-                EnableCard(entry) { viewModel.setEnabled(id, it) }
+                EnableCard(entry) { turningOn ->
+                    val needsWarn = turningOn &&
+                        (entry.origin is com.mochyy.mochymusic.modules.ModuleOrigin.Code || entry.module is ItemListModule) &&
+                        !viewModel.hasAcknowledgedScriptWarning(id)
+                    if (needsWarn) {
+                        overlay.showScriptWarningSheet(
+                            targetName = entry.module.info.name,
+                            isCodeModule = entry.origin is com.mochyy.mochymusic.modules.ModuleOrigin.Code,
+                            onContinue = {
+                                viewModel.acknowledgeScriptWarning(id)
+                                viewModel.setEnabled(id, true)
+                            },
+                        )
+                    } else {
+                        viewModel.setEnabled(id, turningOn)
+                    }
+                }
                 Spacer(Modifier.height(10.dp))
-                InfoCard(entry)
+                InfoCard(entry, onRaise = { viewModel.raise(id) })
+                UpdateCard(
+                    entry = entry,
+                    updating = viewModel.updating.collectAsState().value == id,
+                    checking = viewModel.checkingUpdate.collectAsState().value == id,
+                    onUpdate = { scope.launch { context.updateModule(viewModel, entry) } },
+                    onCheck = { viewModel.checkUpdate(id) },
+                )
                 AccountActions(
                     entry = entry,
                     checking = viewModel.checking.collectAsState().value,
@@ -147,7 +173,7 @@ fun ModuleScreen(navController: NavController, id: String, viewModel: ModulesVie
 
 /** the module's banner, or its icon blown up and blurred when it has none, fading into the page */
 @Composable
-private fun ModuleBanner(entry: ModuleEntry) {
+internal fun ModuleBanner(banner: String?, icon: String?) {
     val fade = Brush.verticalGradient(0f to Color.Black, 0.55f to Color.Black, 1f to Color.Transparent)
     Box(
         Modifier
@@ -160,8 +186,6 @@ private fun ModuleBanner(entry: ModuleEntry) {
                 drawRect(fade, blendMode = BlendMode.DstIn)
             },
     ) {
-        val banner = entry.banner
-        val icon = entry.icon
         when {
             banner != null -> AsyncImage(
                 model = artModel(banner), contentDescription = null, contentScale = ContentScale.Crop,
@@ -193,7 +217,7 @@ private fun ModuleHeader(entry: ModuleEntry) {
         }
         Spacer(Modifier.height(4.dp))
         Text(
-            info.description, fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 15.sp,
+            builtInModuleDescription(entry), fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 15.sp,
             lineHeight = 20.sp, color = Color.White.copy(alpha = 0.92f),
         )
         Spacer(Modifier.height(8.dp))
@@ -202,14 +226,14 @@ private fun ModuleHeader(entry: ModuleEntry) {
 }
 
 // lays its content [by] higher than it would sit and takes that much less room, so it overlaps what's above
-private fun Modifier.pullUp(by: Dp): Modifier = layout { measurable, constraints ->
+internal fun Modifier.pullUp(by: Dp): Modifier = layout { measurable, constraints ->
     val placeable = measurable.measure(constraints)
     val lift = by.roundToPx()
     layout(placeable.width, (placeable.height - lift).coerceAtLeast(0)) { placeable.place(0, -lift) }
 }
 
 @Composable
-private fun BackButton(onClick: () -> Unit) {
+internal fun BackButton(onClick: () -> Unit) {
     val top = WindowInsets.stableStatusBars.asPaddingValues().calculateTopPadding()
     Box(
         modifier = Modifier
@@ -240,4 +264,13 @@ private fun RemoveButton(onClick: () -> Unit) {
         Spacer(Modifier.width(12.dp))
         Text(stringResource(R.string.module_remove), fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, color = Color(0xFFFF8A80))
     }
+}
+
+/** brings in a module's newer copy and says how it went */
+internal suspend fun android.content.Context.updateModule(viewModel: ModulesViewModel, entry: ModuleEntry) {
+    val name = entry.module.info.name
+    val result = viewModel.update(entry.id)
+    val problem = linkProblem(this, result)
+    val message = if (problem == null) getString(R.string.module_updated, name) else getString(R.string.module_update_failed, name, problem)
+    Toast.makeText(this, message, Toast.LENGTH_LONG).show()
 }

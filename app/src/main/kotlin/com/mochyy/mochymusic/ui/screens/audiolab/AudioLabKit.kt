@@ -3,6 +3,15 @@
 package com.mochyy.mochymusic.ui.screens.audiolab
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.semantics.Role
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.Spring
@@ -51,6 +60,7 @@ import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -60,10 +70,12 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
@@ -78,6 +90,7 @@ import com.mochyy.mochymusic.ui.component.AppSwitch
 import com.mochyy.mochymusic.ui.component.DefaultPlayerSeekBarSlider
 import com.mochyy.mochymusic.ui.component.LocalNavAnimatedContentScope
 import com.mochyy.mochymusic.ui.component.damageBoundary
+import com.mochyy.mochymusic.ui.component.reveal
 import com.mochyy.mochymusic.ui.theme.InterFontFamily
 import kotlinx.coroutines.flow.first
 import com.mochyy.mochymusic.ui.component.RemoteFocus
@@ -149,26 +162,62 @@ fun LabToggleRow(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     leadingDot: Boolean = false,
+    highlightKey: String? = null,
 ) {
     val (hideDescriptions) = com.mochyy.mochymusic.utils.rememberPreference(
         com.mochyy.mochymusic.constants.HideSettingsDescriptionsKey,
         defaultValue = true,
     )
+    val requester = remember { BringIntoViewRequester() }
+    val settingsScroll = com.mochyy.mochymusic.ui.component.LocalSettingsScroll.current
+    val density = LocalDensity.current
+    val placement = remember { com.mochyy.mochymusic.ui.component.SettingsPlacement() }
+    LaunchedEffect(highlightKey) {
+        if (highlightKey == null) return@LaunchedEffect
+        snapshotFlow { com.mochyy.mochymusic.ui.component.SettingsHighlight.pending }.collect { pending ->
+            if (pending != highlightKey) return@collect
+            com.mochyy.mochymusic.ui.component.SettingsHighlight.pending = null
+            com.mochyy.mochymusic.ui.component.SettingsHighlight.active = highlightKey
+            kotlinx.coroutines.delay(320)
+            val target = placement.coords
+            if (settingsScroll != null && target != null) {
+                settingsScroll.reveal(target, density)
+            } else {
+                requester.bringIntoView()
+            }
+            kotlinx.coroutines.delay(2400)
+            if (com.mochyy.mochymusic.ui.component.SettingsHighlight.active == highlightKey) {
+                com.mochyy.mochymusic.ui.component.SettingsHighlight.active = null
+            }
+        }
+    }
+    val isFlashing = highlightKey != null && com.mochyy.mochymusic.ui.component.SettingsHighlight.active == highlightKey
+    val highlightAlpha by animateFloatAsState(
+        targetValue = if (isFlashing) 1f else 0f,
+        animationSpec = tween(durationMillis = 450),
+        label = "labHighlight",
+    )
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .then(if (highlightKey != null) Modifier.bringIntoViewRequester(requester).onPlaced { placement.coords = it } else Modifier)
             .clip(RoundedCornerShape(16.dp))
+            .drawBehind {
+                if (highlightAlpha > 0.01f) {
+                    drawRect(color = Color.White.copy(alpha = 0.16f * highlightAlpha))
+                }
+            }
             .clickable(enabled = enabled) { onCheckedChange(!checked) }
             .padding(horizontal = 6.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (leadingDot) {
-            val dot by animateColorAsState(if (checked) Color.White else Color(0xFFD9D9DE), tween(200), label = "dot")
+            val dot = animateColorAsState(if (checked) Color.White else Color(0xFFD9D9DE), tween(200), label = "dot")
             Box(
                 Modifier
                     .size(20.dp)
                     .clip(CircleShape)
-                    .background(dot)
+                    .drawBehind { drawRect(dot.value) }
             )
             Spacer(Modifier.width(12.dp))
         }
@@ -312,6 +361,7 @@ fun LabChips(
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier,
     onLongPress: ((String) -> Unit)? = null,
+    leading: @Composable RowScope.() -> Unit = {},
     trailing: @Composable RowScope.() -> Unit = {},
 ) {
     Row(
@@ -319,32 +369,38 @@ fun LabChips(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        leading()
         chips.forEach { chip ->
-            val selected = chip.key == selectedKey
-            val bg by animateColorAsState(if (selected) Color.White else LabColors.Chip, tween(180), label = "chipBg")
-            val fg by animateColorAsState(if (selected) Color.Black else Color.White, tween(180), label = "chipFg")
-            val interaction = remember { MutableInteractionSource() }
-            Row(
-                modifier = Modifier
-                    .height(38.dp)
-                    .clip(RoundedCornerShape(19.dp))
-                    .background(bg)
-                    .then(
-                        if (onLongPress != null) Modifier.combinedClickableCompat(
-                            interaction, onClick = { onSelect(chip.key) }, onLongClick = { onLongPress(chip.key) },
-                        ) else Modifier.clickable(interaction, null) { onSelect(chip.key) }
-                    )
-                    .padding(horizontal = 16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                if (chip.dot != null) {
-                    Box(Modifier.size(8.dp).clip(CircleShape).background(chip.dot))
-                    Spacer(Modifier.width(8.dp))
-                }
-                Text(chip.label, fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = fg, maxLines = 1)
-            }
+            // keyed, so taking a chip out of the middle doesn't hand its colour to the one after it
+            key(chip.key) { LabChipPill(chip, chip.key == selectedKey, onSelect, onLongPress) }
         }
         trailing()
+    }
+}
+
+@Composable
+private fun LabChipPill(chip: LabChip, selected: Boolean, onSelect: (String) -> Unit, onLongPress: ((String) -> Unit)?) {
+    val bg by animateColorAsState(if (selected) Color.White else LabColors.Chip, tween(180), label = "chipBg")
+    val fg by animateColorAsState(if (selected) Color.Black else Color.White, tween(180), label = "chipFg")
+    val interaction = remember { MutableInteractionSource() }
+    Row(
+        modifier = Modifier
+            .height(38.dp)
+            .clip(RoundedCornerShape(19.dp))
+            .background(bg)
+            .then(
+                if (onLongPress != null) Modifier.combinedClickableCompat(
+                    interaction, onClick = { onSelect(chip.key) }, onLongClick = { onLongPress(chip.key) },
+                ) else Modifier.clickable(interaction, null) { onSelect(chip.key) }
+            )
+            .padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (chip.dot != null) {
+            Box(Modifier.size(8.dp).clip(CircleShape).background(chip.dot))
+            Spacer(Modifier.width(8.dp))
+        }
+        Text(chip.label, fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = fg, maxLines = 1)
     }
 }
 
@@ -507,76 +563,130 @@ fun rememberOnScreen(): MutableState<Boolean> = remember { mutableStateOf(true) 
 @Composable
 fun dpToPx(dp: Dp): Float = with(LocalDensity.current) { dp.toPx() }
 
-/** the dark pill with the chosen option in the middle and a chevron that flips while the list is open; the first option is the "none" one and reads muted */
+/** a discord style select: the choice on the left and a chevron on the right, and opening it unrolls the list right under it as one box with the picked row lit and checked; the first option is the "none" one and reads muted */
 @Composable
-fun LabPicker(
+fun LabSelect(
     options: List<String>,
     selectedIndex: Int,
     onSelect: (Int) -> Unit,
     contentDescription: String,
     modifier: Modifier = Modifier,
     mutedIndex: Int = 0,
-    accent: Color = LabColors.Nodes[9],
+    maxListHeight: Dp = 264.dp,
 ) {
-    var open by remember { mutableStateOf(false) }
-    val chevron by animateFloatAsState(if (open) 180f else 0f, spring(dampingRatio = 0.8f, stiffness = 400f), label = "chevron")
-    Box(modifier.fillMaxWidth()) {
+    var open by rememberSaveable { mutableStateOf(false) }
+    val chevron by animateFloatAsState(if (open) 180f else 0f, spring(dampingRatio = 0.8f, stiffness = 420f), label = "chevron")
+    val edge by animateColorAsState(if (open) LabSelectEdgeOpen else LabSelectEdge, tween(180), label = "selectEdge")
+    val listScroll = rememberScrollState()
+    val rowHeight = with(LocalDensity.current) { LabSelectRowHeight.roundToPx() }
+    val bringIntoView = remember { BringIntoViewRequester() }
+
+    // back closes the list before it leaves the page
+    BackHandler(enabled = open) { open = false }
+    LaunchedEffect(open) {
+        if (!open) return@LaunchedEffect
+        // open with the picked row in sight, then make room for the list once it has unrolled
+        listScroll.scrollTo(((selectedIndex - 2) * rowHeight).coerceAtLeast(0))
+        kotlinx.coroutines.delay(LabSelectUnrollMs.toLong())
+        bringIntoView.bringIntoView()
+    }
+
+    Column(
+        modifier
+            .fillMaxWidth()
+            .bringIntoViewRequester(bringIntoView)
+            .clip(LabSelectShape)
+            .background(LabSelectColor)
+            .border(1.dp, edge, LabSelectShape),
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(52.dp)
-                .clip(RoundedCornerShape(26.dp))
-                .background(LabPickerColor)
-                .clickable { open = true }
-                .padding(horizontal = 20.dp),
+                .height(50.dp)
+                .clickable { open = !open }
+                .padding(start = 16.dp, end = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Spacer(Modifier.size(24.dp))
             Text(
                 text = options.getOrNull(selectedIndex).orEmpty(),
                 fontFamily = InterFontFamily,
                 fontWeight = FontWeight.SemiBold,
-                fontSize = 17.sp,
+                fontSize = 15.sp,
                 color = if (selectedIndex == mutedIndex) LabColors.Secondary else LabColors.Primary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             )
             Icon(
                 painter = painterResource(com.mochyy.mochymusic.R.drawable.expand_more),
                 contentDescription = contentDescription,
-                tint = Color.White,
-                modifier = Modifier.size(24.dp).graphicsLayer { rotationZ = chevron },
+                tint = if (open) Color.White else LabColors.Secondary,
+                modifier = Modifier.size(22.dp).graphicsLayer { rotationZ = chevron },
             )
         }
-        androidx.compose.material3.DropdownMenu(
-            expanded = open,
-            onDismissRequest = { open = false },
-            shape = RoundedCornerShape(20.dp),
-            containerColor = LabColors.Card,
+        AnimatedVisibility(
+            visible = open,
+            enter = expandVertically(tween(LabSelectUnrollMs, easing = FastOutSlowInEasing), expandFrom = Alignment.Top) + fadeIn(tween(160, 40)),
+            exit = shrinkVertically(tween(200, easing = FastOutSlowInEasing), shrinkTowards = Alignment.Top) + fadeOut(tween(120)),
         ) {
-            options.forEachIndexed { index, label ->
-                val picked = index == selectedIndex
-                androidx.compose.material3.DropdownMenuItem(
-                    text = {
-                        Text(
-                            label,
-                            fontFamily = InterFontFamily,
-                            fontWeight = if (picked) FontWeight.SemiBold else FontWeight.Normal,
-                            fontSize = 15.sp,
-                            color = if (picked) LabColors.Primary else LabColors.Secondary,
+            Column {
+                Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp).height(1.dp).background(LabSelectEdge))
+                Column(
+                    Modifier
+                        .heightIn(max = maxListHeight)
+                        .verticalScroll(listScroll)
+                        .padding(6.dp),
+                ) {
+                    options.forEachIndexed { index, label ->
+                        LabSelectRow(
+                            label = label,
+                            picked = index == selectedIndex,
+                            onClick = {
+                                onSelect(index)
+                                open = false
+                            },
                         )
-                    },
-                    trailingIcon = if (picked) {
-                        { Icon(painterResource(com.mochyy.mochymusic.R.drawable.check), contentDescription = null, tint = accent, modifier = Modifier.size(18.dp)) }
-                    } else null,
-                    onClick = {
-                        onSelect(index)
-                        open = false
-                    },
-                )
+                    }
+                }
             }
         }
     }
 }
 
-private val LabPickerColor = Color(0xFF141416)
+// one option in the open list: the picked one sits on a lighter row with a filled check at its end
+@Composable
+private fun LabSelectRow(label: String, picked: Boolean, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(LabSelectRowHeight)
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (picked) LabColors.Row else Color.Transparent)
+            .selectable(selected = picked, role = Role.RadioButton, onClick = onClick)
+            .padding(start = 10.dp, end = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            fontFamily = InterFontFamily,
+            fontWeight = if (picked) FontWeight.SemiBold else FontWeight.Medium,
+            fontSize = 15.sp,
+            color = if (picked) LabColors.Primary else LabColors.Secondary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        if (picked) {
+            Box(Modifier.size(20.dp).clip(CircleShape).background(Color.White), contentAlignment = Alignment.Center) {
+                Icon(painterResource(com.mochyy.mochymusic.R.drawable.check), contentDescription = null, tint = Color.Black, modifier = Modifier.size(14.dp))
+            }
+        }
+    }
+}
+
+private const val LabSelectUnrollMs = 240
+private val LabSelectRowHeight = 44.dp
+private val LabSelectShape = RoundedCornerShape(16.dp)
+private val LabSelectColor = Color(0xFF141416)
+private val LabSelectEdge = Color(0xFF2A2A2F)
+private val LabSelectEdgeOpen = Color(0xFF3C3C42)

@@ -2,6 +2,7 @@
 
 package com.mochyy.mochymusic.ui.screens.setup.onboarding
 
+import androidx.compose.ui.res.stringResource
 import com.mochyy.mochymusic.ui.theme.InterFontFamily
 import androidx.compose.animation.core.withInfiniteAnimationFrameNanos
 import androidx.compose.foundation.Canvas
@@ -133,7 +134,7 @@ internal fun ProfileIdCard(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = "PROFILE USR#$cardNumber",
+                        text = stringResource(R.string.onb_card_profile_usr, cardNumber),
                         color = mutedText,
                         fontFamily = FontFamily.Monospace,
                         fontSize = (unit.value * 11f).sp,
@@ -157,14 +158,14 @@ internal fun ProfileIdCard(
                         if (photo != null) {
                             AsyncImage(
                                 model = photo,
-                                contentDescription = "Profile picture",
+                                contentDescription = stringResource(R.string.onb_profile_picture),
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize(),
                             )
                         } else if (onPhotoClick != null) {
                             Icon(
                                 painterResource(R.drawable.add),
-                                contentDescription = "Add a profile picture",
+                                contentDescription = stringResource(R.string.onb_add_profile_picture),
                                 tint = Color.White.copy(alpha = 0.7f),
                                 modifier = Modifier.size(unit * 34f),
                             )
@@ -174,7 +175,7 @@ internal fun ProfileIdCard(
                     Column(modifier = Modifier.weight(1f)) {
                         if (showIdCardOf) {
                             Text(
-                                "ID CARD OF",
+                                stringResource(R.string.onb_card_id_of),
                                 color = mutedText,
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = (unit.value * 10f).sp,
@@ -212,7 +213,7 @@ internal fun ProfileIdCard(
                 Spacer(Modifier.weight(1f))
             }
             MarqueeStrip(
-                text = "${name}`s CARD",
+                text = stringResource(R.string.onb_card_of_name, name),
                 color = if (silver) Color(0xFF2B2B30).copy(alpha = 0.75f) else Color(0xFF8A8A8A),
                 background = if (silver) Color.Black.copy(alpha = 0.18f) else Color(0xFF1B1B1B),
                 modifier = Modifier
@@ -263,8 +264,9 @@ internal fun MarqueeStrip(
     running: () -> Boolean = { true },
 ) {
     val measurer = rememberTextMeasurer()
-    val style = remember(color, fontSizeSp) {
-        TextStyle(color = color, fontFamily = InterFontFamily, fontSize = fontSizeSp.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
+    val fontFamily = InterFontFamily
+    val style = remember(color, fontSizeSp, fontFamily) {
+        TextStyle(color = color, fontFamily = fontFamily, fontSize = fontSizeSp.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
     }
     val layout = remember(text, style) { measurer.measure("$text   ·   ", style) }
     var progress by remember { mutableFloatStateOf(0f) }

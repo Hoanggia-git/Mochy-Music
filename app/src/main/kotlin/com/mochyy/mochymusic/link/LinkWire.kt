@@ -8,69 +8,78 @@ import android.net.nsd.NsdServiceInfo
 import android.os.Build
 import android.provider.Settings
 import androidx.core.content.edit
+import com.mochyy.mochymusic.utils.LanHttpClient
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
-import okhttp3.Response
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import timber.log.Timber
-import java.security.SecureRandom
+import java.net.URLDecoder
 import java.util.ArrayDeque
 import java.util.UUID
-import java.util.concurrent.TimeUnit
 
 // the names both sides agree on, so a phone and a tv on different app versions still find each other
 object LinkWire {
-    // the phone keeps this one up while it has a tv paired
+    // a phone keeps this one up while it has any device paired
     const val PhoneServiceType = "_mochylink._tcp."
 
-    // the tv only shows up as this while its pairing screen is open
-    const val TvServiceType = "_mochytv._tcp."
+    // a device only shows up as this while its pairing screen is open, the name is from when only tvs had one
+    const val PairServiceType = "_mochytv._tcp."
 
     const val PhonePort = 47_801
-    const val TvPairPort = 47_802
+    const val PairPort = 47_802
 
     // the tv listens here for its phone's play, skip and look commands while a linked profile is open
     const val TvControlPort = 47_803
 
-    const val KeyHeader = "X-Mochy-Key"
+    // bumped when a route changes shape, so an old phone and a new tv can say so instead of failing quietly; 2 signs every call and pairs without sending the key
+    const val ProtocolVersion = 2
 
-    // bumped when a route changes shape, so an old phone and a new tv can say so instead of failing quietly
-    const val ProtocolVersion = 1
+    // the header the old protocol carried the key itself in; only looked for, so an un-updated device hears "update" instead of "unpaired"
+    const val OldKeyHeader = "X-Mochy-Key"
 
     const val AttrId = "id"
     const val AttrName = "n"
+    const val AttrKind = "k"
 
-    // a lan is fast and a phone that's gone should be noticed quickly, so short waits
-    val client: OkHttpClient by lazy {
-        OkHttpClient.Builder()
-            .connectTimeout(4, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
-            .retryOnConnectionFailure(false)
-            .build()
-    }
+    private const val ConnectTimeoutMs = 4_000
+    private const val ReadTimeoutMs = 30_000
+    // a big library takes the phone a while to copy and squeeze before the first byte goes out
+    private const val SlowReadTimeoutMs = 3 * 60_000
+
+    fun getSlow(url: String, auth: LinkCredentials?): LanHttpClient.Response =
+        execute(url, auth, json = null, readTimeoutMs = SlowReadTimeoutMs)
 
     fun baseUrl(host: String, port: Int) = "http://${if (host.contains(':')) "[$host]" else host}:$port"
 
-    fun newKey(): String {
-        val bytes = ByteArray(24)
-        SecureRandom().nextBytes(bytes)
-        return bytes.joinToString("") { "%02x".format(it) }
+    fun get(url: String, auth: LinkCredentials?): LanHttpClient.Response =
+        execute(url, auth, json = null, readTimeoutMs = ReadTimeoutMs)
+
+    fun postJson(url: String, auth: LinkCredentials?, json: String): LanHttpClient.Response =
+        execute(url, auth, json = json, readTimeoutMs = ReadTimeoutMs)
+
+    // a call signed with the key when there is one; strictly restricted to private LAN peers via LanHttpClient
+    private fun execute(url: String, auth: LinkCredentials?, json: String?, readTimeoutMs: Int): LanHttpClient.Response {
+        val body = json?.toByteArray(Charsets.UTF_8)
+        val method = if (body == null) "GET" else "POST"
+        val headers = LinkedHashMap<String, String>()
+        if (auth != null) {
+            val parsed = url.toHttpUrl()
+            val path = URLDecoder.decode(parsed.encodedPath, "UTF-8")
+            headers[LinkAuth.Header] = LinkAuth.header(auth, method, path, LinkAuth.parseQuery(parsed.encodedQuery), body)
+        }
+        if (body != null) {
+            headers["Content-Type"] = "application/json; charset=utf-8"
+        }
+        return LanHttpClient.execute(
+            method = method,
+            url = url,
+            headers = headers,
+            body = body,
+            connectTimeoutMs = ConnectTimeoutMs,
+            readTimeoutMs = readTimeoutMs,
+        )
     }
-
-    fun get(url: String, key: String?): Response =
-        client.newCall(Request.Builder().url(url).apply { key?.let { header(KeyHeader, it) } }.build()).execute()
-
-    fun postJson(url: String, key: String?, json: String): Response =
-        client.newCall(
-            Request.Builder().url(url)
-                .apply { key?.let { header(KeyHeader, it) } }
-                .post(json.toRequestBody("application/json; charset=utf-8".toMediaType()))
-                .build()
-        ).execute()
 }
 
 // this device as the other side sees it: a stable id that survives renames, and a name people recognise
@@ -93,8 +102,8 @@ object LinkIdentity {
     }
 }
 
-// a device found on the wi-fi, with where to reach it
-data class LinkPeer(val id: String, val name: String, val host: String, val port: Int)
+// a device found on the wi-fi, with where to reach it; kind is a tv when the device didn't say
+data class LinkPeer(val id: String, val name: String, val host: String, val port: Int, val kind: DeviceKind = DeviceKind.Tv)
 
 // puts this device on the wi-fi under a service type until close is called
 class LinkAdvert(context: Context, type: String, name: String, port: Int, attributes: Map<String, String>) {
@@ -155,7 +164,8 @@ fun discoverPeers(context: Context, type: String): Flow<List<LinkPeer>> = callba
                     val id = attrs[LinkWire.AttrId]?.toString(Charsets.UTF_8)
                     if (host != null && id != null) {
                         val name = attrs[LinkWire.AttrName]?.toString(Charsets.UTF_8) ?: info.serviceName
-                        found[info.serviceName] = LinkPeer(id, name, host, info.port)
+                        val kind = DeviceKind.fromWire(attrs[LinkWire.AttrKind]?.toString(Charsets.UTF_8), DeviceKind.Tv)
+                        found[info.serviceName] = LinkPeer(id, name, host, info.port, kind)
                         publish()
                     }
                     resolving.set(false)
@@ -190,12 +200,14 @@ fun discoverPeers(context: Context, type: String): Flow<List<LinkPeer>> = callba
 }
 
 private fun hostOf(info: NsdServiceInfo): String? {
-    val address = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-        info.hostAddresses.firstOrNull { it is java.net.Inet4Address } ?: info.hostAddresses.firstOrNull()
+    val candidates = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+        info.hostAddresses
     } else {
         @Suppress("DEPRECATION")
-        info.host
+        listOfNotNull(info.host)
     }
+    val lanOnly = candidates.filter { LanHttpClient.isPrivateLanAddress(it) }
+    val address = lanOnly.firstOrNull { it is java.net.Inet4Address } ?: lanOnly.firstOrNull()
     return address?.hostAddress?.substringBefore('%')
 }
 

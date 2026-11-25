@@ -42,9 +42,10 @@ package com.mochyy.mochymusic.ui.component
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animate
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
@@ -65,12 +66,10 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
@@ -89,27 +88,37 @@ import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusRestorer
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
+import com.mochyy.mochymusic.modules.skin.ActiveSkin
 import com.mochyy.mochymusic.ui.player.menu.MenuRowSurface
 import com.mochyy.mochymusic.ui.player.menu.MenuSurface
+import com.mochyy.mochymusic.ui.player.menu.resolvedSheetRowSurface
+import com.mochyy.mochymusic.ui.player.menu.resolvedSheetSurface
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
@@ -151,6 +160,8 @@ class PopupSheetState {
         val onClosed: (() -> Unit)?,
         /** The sheet's own colour, for a [fullBleed] sheet that paints a different one; null = [MenuSurface]. */
         val surface: Color?,
+        // false for a sheet whose art runs up to its top edge on purpose, the fade would only muddy it
+        val topFade: Boolean,
         val content: @Composable ColumnScope.() -> Unit,
     ) {
         /** Shown unlocked = keeps its handle row even while [locked], so locking can't shift the content. */
@@ -188,9 +199,10 @@ class PopupSheetState {
         fullBleed: Boolean = false,
         onClosed: (() -> Unit)? = null,
         surface: Color? = null,
+        topFade: Boolean = true,
         content: @Composable ColumnScope.() -> Unit,
     ) {
-        showWithHandle(locked, buttonBar, fullBleed, onClosed, surface, content)
+        showWithHandle(locked, buttonBar, fullBleed, onClosed, surface, topFade, content)
     }
 
     /**
@@ -205,6 +217,7 @@ class PopupSheetState {
         fullBleed: Boolean = false,
         onClosed: (() -> Unit)? = null,
         surface: Color? = null,
+        topFade: Boolean = true,
         content: @Composable ColumnScope.() -> Unit,
     ): PopupSheetHandle {
         // A frame already on its way out stays on top until it's gone, so the new one slides in
@@ -212,7 +225,7 @@ class PopupSheetState {
         var index = frames.size
         while (index > 0 && frames[index - 1].closing) index--
         val covered = frames.getOrNull(index - 1)
-        val frame = Frame(locked, buttonBar, fullBleed, covered?.heightPx ?: 0f, onClosed, surface, content)
+        val frame = Frame(locked, buttonBar, fullBleed, covered?.heightPx ?: 0f, onClosed, surface, topFade, content)
         frames.add(index, frame)
         return PopupSheetHandle(frame)
     }
@@ -304,6 +317,9 @@ private val PeekHeight = 24.dp
 private const val FlingCloseThreshold = 1200f
 private const val DragCloseThreshold = 0.35f
 
+// how far down a pull goes before the bar turns into an arrow, so a finger's wobble doesn't flicker it
+private const val ArrowAfterPull = 0.015f
+
 /**
  * Wraps the whole app. When any of [states] has a visible frame, [content] zooms out and dims
  * behind the active sheet - this is the single place that owns that transform, so every popup
@@ -313,10 +329,20 @@ private const val DragCloseThreshold = 0.35f
 fun PopupSheetHost(
     states: List<PopupSheetState>,
     modifier: Modifier = Modifier,
+    // where a tv remote goes back to once the last sheet has left; the sheets hold it until then
+    focusReturn: FocusRequester? = null,
     content: @Composable () -> Unit,
 ) {
     val active = states.firstOrNull { it.isVisible }
     val playerSheet = LocalPlayerBottomSheetState.current
+
+    if (focusReturn != null) {
+        var sheetWasUp by remember { mutableStateOf(false) }
+        LaunchedEffect(active != null) {
+            if (active == null && sheetWasUp) runCatching { focusReturn.requestFocus() }
+            sheetWasUp = active != null
+        }
+    }
 
     Box(modifier = modifier.fillMaxSize()) {
         Box(
@@ -325,11 +351,11 @@ fun PopupSheetHost(
                 .graphicsLayer {
                     // Read inside the layer, not in composition: it changes on every frame of
                     // every drag/transition, and this way only this layer re-runs, not the app.
-                    val p = active?.presence ?: 0f
+                    val p = (active?.presence ?: 0f).coerceIn(0f, 1f)
                     val scale = 1f - BackdropRecede * p
                     scaleX = scale
                     scaleY = scale
-                    shape = RoundedCornerShape((28f * p).dp)
+                    shape = PopupBackdropShapes[(p * PopupBackdropMaxStep + 0.5f).toInt()]
                     clip = p > 0f
                     // While the sheet moves, the app behind is drawn once into a layer and the
                     // zoom moves that - the same as behind the player. Zoomed live, every frame
@@ -351,10 +377,11 @@ fun PopupSheetHost(
         // Only gated on `active`, which changes once per open/close - never on the live
         // presence, which would recompose everything from here down on every drag delta.
         if (active != null) {
+            val sheetDim = ActiveSkin.sheet?.sheet?.dim ?: 0.5f
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .graphicsLayer { alpha = 0.5f * active.presence }
+                    .graphicsLayer { alpha = sheetDim * active.presence }
                     .background(Color.Black)
             )
 
@@ -372,15 +399,29 @@ fun PopupSheetHost(
 }
 
 /** Phone/tablet geometry shared by every frame in a stack. */
+// Pre-allocated rounded shapes (0dp..28dp in 0.5dp steps) so popup open/close never allocates shapes per frame.
+private const val PopupBackdropMaxStep = 56
+private val PopupBackdropShapes = Array(PopupBackdropMaxStep + 1) { step ->
+    RoundedCornerShape((step * 0.5f).dp)
+}
+
 @Immutable
 private data class StackMetrics(
     val isTablet: Boolean,
+    // on its side: a card floating in the middle of the room below the status bar
+    val floating: Boolean,
     val parentHeightPx: Float,
     val peekPx: Float,
+    val floatingMarginPx: Float,
+    // a floating card's gap at the top: its margin, or the status bar when that's taller
+    val floatingTopPx: Float,
 ) {
-    /** Where an open sheet of this height sits: bottom-anchored on phones, centered on tablets. */
-    fun layoutTop(sheetHeightPx: Float): Float =
-        if (isTablet) (parentHeightPx - sheetHeightPx) / 2f else parentHeightPx - sheetHeightPx
+    /** Where an open sheet of this height sits: bottom-anchored on phones, centered on tablets, floating centred below the status bar on its side. */
+    fun layoutTop(sheetHeightPx: Float): Float = when {
+        floating -> floatingTopPx + ((parentHeightPx - floatingTopPx - floatingMarginPx - sheetHeightPx) / 2f).coerceAtLeast(0f)
+        isTablet -> (parentHeightPx - sheetHeightPx) / 2f
+        else -> parentHeightPx - sheetHeightPx
+    }
 
     /** How far that sheet slides to get from open to fully off the bottom of the screen. */
     fun travel(sheetHeightPx: Float): Float = parentHeightPx - layoutTop(sheetHeightPx)
@@ -391,8 +432,13 @@ private fun PopupSheetStack(state: PopupSheetState) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val metrics = StackMetrics(
             isTablet = maxWidth >= TabletBreakpoint,
+            floating = com.mochyy.mochymusic.ui.utils.isLandscapeLayout(),
             parentHeightPx = constraints.maxHeight.toFloat(),
             peekPx = with(LocalDensity.current) { PeekHeight.toPx() },
+            floatingMarginPx = with(LocalDensity.current) { FloatingMargin.toPx() },
+            floatingTopPx = with(LocalDensity.current) {
+                maxOf(WindowInsets.stableStatusBars.asPaddingValues().calculateTopPadding(), FloatingMargin).toPx()
+            },
         )
 
         // One keyed slot per frame, all at this one call site: pushing or popping a frame never
@@ -475,6 +521,7 @@ private class FrameMotion(
  * is its own `offset` plus the recede derived from the frames in front of it ([restingTopOf]),
  * all applied in one graphicsLayer, so nothing here recomposes while things move.
  */
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun BoxWithConstraintsScope.PopupSheetFrame(
     state: PopupSheetState,
@@ -491,11 +538,46 @@ private fun BoxWithConstraintsScope.PopupSheetFrame(
     val currentInteractive by rememberUpdatedState(interactive)
     val currentMetrics by rememberUpdatedState(metrics)
 
+    // a tv remote: the sheet in front holds it, or its presses land on the page behind and the sheet seems to pop in and out
+    val remote = LocalInputModeManager.current.inputMode == InputMode.Keyboard
+    val currentRemote by rememberUpdatedState(remote)
+    val currentIsFront by rememberUpdatedState(isFront)
+    val sheetFocus = remember(frame) { FocusRequester() }
+    var holdsFocus by remember(frame) { mutableStateOf(false) }
+
     fun travelPx(): Float = currentMetrics.travel(frame.heightPx).coerceAtLeast(1f)
 
     fun close(velocity: Float = 0f) = motion.exit(velocity) { state.remove(frame) }
 
+    // true while a finger pulls the sheet down, so its bar folds into an arrow; letting go settles it flat again
+    var pulling by remember(frame) { mutableStateOf(false) }
+
+    // a locked sheet can't be pulled away, so its bar just stays a line
+    val bend = rememberSheetGrabberBend {
+        !frame.locked && (frame.closing || (pulling && frame.offset > ArrowAfterPull))
+    }
+
+    val activeSheet = ActiveSkin.sheet
+    val defaultSurface = resolvedSheetSurface()
+    val defaultRow = resolvedSheetRowSurface()
+    val sheetStroke = activeSheet?.sheet?.stroke
+    val sheetStrokeColor = activeSheet?.sheet?.strokeColor?.onChrome(
+        androidx.compose.material3.MaterialTheme.colorScheme.primary,
+        activeSheet.values,
+    ) ?: Color.White.copy(alpha = 0.16f)
+
+    // the sheet's colour, stepping up to the row gray as it recedes; the fade behind its bar matches it
+    val surfaceColor: () -> Color = remember(state, frame, defaultSurface, defaultRow) {
+        {
+            val frames = state.frames
+            val index = frames.indexOf(frame)
+            val recede = if (index < 0) 0f else frames.depthAbove(index).coerceAtMost(1f)
+            lerp(frame.surface ?: defaultSurface, defaultRow, recede)
+        }
+    }
+
     fun settle(velocityPx: Float) {
+        pulling = false
         if (!currentInteractive) {
             if (frame.offset > 0f) motion.animateTo(0f)
             return
@@ -515,6 +597,8 @@ private fun BoxWithConstraintsScope.PopupSheetFrame(
         // laying out the content is the expensive frame, and it shouldn't be the animation's first.
         snapshotFlow { frame.heightPx }.first { it > 0f }
         withFrameNanos { }
+        // the remote goes to the sheet's first button, unless the content already picked one
+        if (currentRemote && !frame.closing && !holdsFocus) runCatching { sheetFocus.requestFocus() }
         if (!frame.closing) motion.animateTo(0f)
     }
 
@@ -527,6 +611,10 @@ private fun BoxWithConstraintsScope.PopupSheetFrame(
     // Covered mid-drag: settle back open behind the new sheet instead of staying half-dragged.
     LaunchedEffect(isFront) {
         if (!isFront && !frame.closing && frame.offset > 0f && !motion.isRunning) motion.animateTo(0f)
+        // back in front after the sheet over it left: the remote returns to the button that opened that sheet
+        if (isFront && remote && !holdsFocus && frame.heightPx > 0f) {
+            runCatching { if (!sheetFocus.restoreFocusedChild()) sheetFocus.requestFocus() }
+        }
     }
 
     // A locked front sheet still swallows back, so back can't navigate the app away underneath it.
@@ -537,6 +625,7 @@ private fun BoxWithConstraintsScope.PopupSheetFrame(
     val dragHandle = Modifier.draggable(
         state = rememberDraggableState { delta ->
             frame.offset = (frame.offset + delta / travelPx()).coerceIn(0f, 1f)
+            if (delta > 0f) pulling = true
         },
         orientation = Orientation.Vertical,
         enabled = interactive,
@@ -567,6 +656,7 @@ private fun BoxWithConstraintsScope.PopupSheetFrame(
                 }
                 motion.stop()
                 frame.offset = (frame.offset + available.y / travelPx()).coerceAtMost(1f)
+                pulling = true
                 return available
             }
 
@@ -585,13 +675,15 @@ private fun BoxWithConstraintsScope.PopupSheetFrame(
         }
     }
 
-    val shape = remember(metrics.isTablet) { sheetSurfaceShape(metrics.isTablet) }
-    val minHeight = if (metrics.isTablet) 0.dp else with(LocalDensity.current) { frame.minHeightPx.toDp() }
+    val centred = metrics.isTablet && !metrics.floating
+    val customCorner = activeSheet?.sheet?.corner
+    val shape = remember(centred, metrics.floating, customCorner) { sheetSurfaceShape(centred, metrics.floating, customCorner) }
+    val minHeight = if (centred) 0.dp else with(LocalDensity.current) { frame.minHeightPx.toDp() }
 
     Box(
         modifier = Modifier
-            .align(if (metrics.isTablet) Alignment.Center else Alignment.BottomCenter)
-            .then(sheetSizeModifier(metrics.isTablet))
+            .align(if (centred || metrics.floating) Alignment.Center else Alignment.BottomCenter)
+            .then(sheetSizeModifier(centred, metrics.floating))
             // Lifts the sheet clear of the keyboard (and shrinks its room by the same amount), for
             // the sheets with a text field. After the size cap and before the measurement below,
             // so what is measured - and what the stack geometry works from - is the sheet itself.
@@ -615,22 +707,31 @@ private fun BoxWithConstraintsScope.PopupSheetFrame(
             .drawBehind {
                 // Steps up to the row gray as it recedes, so the strip peeking above the sheet in
                 // front reads as a separate layer against both that sheet and the dimmed app.
-                val frames = state.frames
-                val index = frames.indexOf(frame)
-                val recede = if (index < 0) 0f else frames.depthAbove(index).coerceAtMost(1f)
-                drawRect(lerp(frame.surface ?: MenuSurface, MenuRowSurface, recede))
+                drawRect(surfaceColor())
             }
+            .then(if (sheetStroke != null) Modifier.border(sheetStroke, sheetStrokeColor, shape) else Modifier)
             // The whole sheet is a touch target, not just the parts of its content that have one -
             // otherwise a tap on an empty patch (beside a row, around the button bar) fell
             // through to the backdrop or the sheet behind and closed something.
             .pointerInput(Unit) {}
             .then(if (isFront) Modifier else Modifier.clearAndSetSemantics {})
+            .onFocusChanged { holdsFocus = it.hasFocus }
+            .focusRequester(sheetFocus)
+            .focusProperties {
+                onExit = {
+                    // in front, the remote stays inside; covered, it remembers which button it left from
+                    if (currentIsFront && currentRemote) cancelFocusChange() else sheetFocus.saveFocusedChild()
+                }
+            }
+            .focusGroup()
     ) {
         SheetBody(
             frame = frame,
-            fillHeight = metrics.isTablet,
+            fillHeight = centred,
             minHeight = minHeight,
             dragHandle = dragHandle,
+            bend = remember(bend) { { bend.value } },
+            surfaceColor = surfaceColor,
             contentModifier = Modifier.nestedScroll(nestedScrollConnection),
         )
 
@@ -646,17 +747,33 @@ private fun BoxWithConstraintsScope.PopupSheetFrame(
     }
 }
 
-private fun sheetSurfaceShape(isTablet: Boolean): Shape =
-    RoundedCornerShape(
-        topStart = if (isTablet) 28.dp else 24.dp,
-        topEnd = if (isTablet) 28.dp else 24.dp,
-        bottomStart = if (isTablet) 28.dp else 0.dp,
-        bottomEnd = if (isTablet) 28.dp else 0.dp,
-    )
+private fun sheetSurfaceShape(isTablet: Boolean, floating: Boolean, customCorner: Dp? = null): Shape =
+    if (floating) {
+        RoundedCornerShape(customCorner ?: FloatingCorner)
+    } else {
+        val top = customCorner ?: if (isTablet) 28.dp else 24.dp
+        val bottom = if (isTablet) (customCorner ?: 28.dp) else 0.dp
+        RoundedCornerShape(
+            topStart = top,
+            topEnd = top,
+            bottomStart = bottom,
+            bottomEnd = bottom,
+        )
+    }
 
 @Composable
-private fun BoxWithConstraintsScope.sheetSizeModifier(isTablet: Boolean): Modifier =
-    if (isTablet) {
+private fun BoxWithConstraintsScope.sheetSizeModifier(isTablet: Boolean, floating: Boolean): Modifier =
+    if (floating) {
+        // as tall as what's in it, up to the status bar less a margin and a peek strip, never the full width
+        val statusBar = WindowInsets.stableStatusBars.asPaddingValues().calculateTopPadding()
+        val room = maxHeight - maxOf(statusBar, FloatingMargin) - FloatingMargin * 2 - PeekHeight
+        // centred between the status bar and the bottom margin, matching layoutTop
+        Modifier
+            .padding(top = maxOf(statusBar, FloatingMargin), bottom = FloatingMargin)
+            .widthIn(max = FloatingMaxWidth)
+            .fillMaxWidth()
+            .heightIn(max = room.coerceAtLeast(0.dp))
+    } else if (isTablet) {
         Modifier
             .widthIn(max = 460.dp)
             .fillMaxHeight(0.84f)
@@ -673,7 +790,12 @@ private fun BoxWithConstraintsScope.sheetSizeModifier(isTablet: Boolean): Modifi
 /** Space kept between the status bar and the highest a sheet's peek strip can reach. */
 private val StatusBarGap = 6.dp
 
-// how tall the handle row is, so a full-bleed sheet can paint its art up behind it
+// a floating sheet's gap to the edges, its widest and its corners, the same card the video mode's sheets are
+private val FloatingMargin = 18.dp
+private val FloatingMaxWidth = 380.dp
+private val FloatingCorner = 28.dp
+
+// how tall the handle row is, so a full-bleed sheet can paint its art up behind it and a scroller can slide under it
 val PopupSheetHandleHeight = 32.dp
 
 /**
@@ -687,6 +809,8 @@ private fun SheetBody(
     fillHeight: Boolean,
     minHeight: Dp,
     dragHandle: Modifier,
+    bend: () -> Float,
+    surfaceColor: () -> Color,
     contentModifier: Modifier,
 ) {
     Column(
@@ -703,29 +827,15 @@ private fun SheetBody(
                 .weight(1f, fill = false)
         ) {
             if (frame.hasHandle) {
-                val handleAlpha = animateFloatAsState(
-                    targetValue = if (frame.locked) 0f else 1f,
-                    animationSpec = PopupSpring,
-                    label = "popupSheetHandle",
-                )
-                Box(
+                SheetHandleRow(
+                    bend = bend,
+                    fade = if (frame.topFade) surfaceColor else null,
                     modifier = Modifier
-                        // drawn after the content, so art painted up into this row stays under the handle
+                        // drawn after the content, so art painted up into this row and rows scrolled under it stay beneath the bar
                         .zIndex(1f)
-                        .fillMaxWidth()
                         .height(PopupSheetHandleHeight)
                         .then(dragHandle),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .width(36.dp)
-                            .height(4.dp)
-                            .graphicsLayer { alpha = handleAlpha.value }
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
-                    )
-                }
+                )
             } else {
                 Spacer(
                     Modifier
@@ -734,13 +844,18 @@ private fun SheetBody(
                 )
             }
 
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .then(contentModifier)
-                    .then(if (frame.fullBleed) Modifier else Modifier.padding(horizontal = 20.dp)),
-                content = frame.content,
-            )
+            // a sheet shown locked has no handle row, so there's nothing for its scroller to slide under
+            val room = remember(frame) { if (frame.hasHandle) SheetHandleRoom(PopupSheetHandleHeight) else null }
+            CompositionLocalProvider(LocalSheetHandleRoom provides room) {
+                Column(
+                    modifier = Modifier
+                        .then(if (room != null) Modifier.underSheetHandle(room) else Modifier)
+                        .fillMaxWidth()
+                        .then(contentModifier)
+                        .then(if (frame.fullBleed) Modifier else Modifier.padding(horizontal = 20.dp)),
+                    content = frame.content,
+                )
+            }
         }
 
         frame.buttonBar?.let { bar ->

@@ -54,7 +54,6 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -134,11 +133,8 @@ fun SubSettingsScaffold(
     // top-right, so it reads as one shape warping into a circle rather than one thing fading out
     // while an unrelated icon fades in elsewhere. The two rects are plain layout constants - no
     // live position measurement feeding back into the content a RenderNode is capturing.
-    val screenWidth = LocalConfiguration.current.screenWidthDp.dp
     val expandedBarX = PagePadding
     val expandedBarY = totalHeaderHeight
-    val expandedBarWidth = screenWidth - PagePadding * 2
-    val collapsedBarX = screenWidth - PagePadding - BackButtonSize
     val collapsedBarY = statusBarTop + HeaderTopPadding
 
     LaunchedEffect(collapse) {
@@ -299,7 +295,11 @@ fun SubSettingsScaffold(
             // deforming into a circle rather than a new element appearing elsewhere.
             Box(
                 modifier = Modifier
-                    .layout { measurable, _ ->
+                    .layout { measurable, constraints ->
+                        // the page's own width, not the screen's: beside the settings list the screen-wide pill spilt over the list and the icon slot sat off the page
+                        val pageWidth = constraints.maxWidth.toDp()
+                        val expandedBarWidth = pageWidth - PagePadding * 2
+                        val collapsedBarX = pageWidth - PagePadding - BackButtonSize
                         val p = collapse.value
                         val width = lerpDp(expandedBarWidth, BackButtonSize, p).roundToPx()
                         val height = lerpDp(SearchBarHeight, BackButtonSize, p).roundToPx()
@@ -317,12 +317,14 @@ fun SubSettingsScaffold(
                     }
                     .background(Color(0xFF2C2C2E))
             ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .graphicsLayer { alpha = (1f - collapse.value / 0.6f).coerceIn(0f, 1f) }
-                ) {
-                    searchBar()
+                if (!iconTappable && !searchOverlayVisible) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer { alpha = (1f - collapse.value / 0.6f).coerceIn(0f, 1f) }
+                    ) {
+                        searchBar()
+                    }
                 }
 
                 Box(
@@ -330,9 +332,14 @@ fun SubSettingsScaffold(
                         .fillMaxSize()
                         .graphicsLayer { alpha = ((collapse.value - 0.45f) / 0.55f).coerceIn(0f, 1f) }
                         .clip(CircleShape)
-                        .clickable(enabled = iconTappable) {
-                            searchOverlayVisible = !searchOverlayVisible
-                        },
+                        // only attach clickable once collapsed so the invisible circle doesn't swallow taps on the open search field
+                        .then(
+                            if (iconTappable) {
+                                Modifier.clickable { searchOverlayVisible = !searchOverlayVisible }
+                            } else {
+                                Modifier
+                            }
+                        ),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
@@ -341,7 +348,7 @@ fun SubSettingsScaffold(
                         } else {
                             rememberAsyncImagePainter(model = R.raw.search)
                         },
-                        contentDescription = if (searchOverlayVisible) "Hide search" else "Search",
+                        contentDescription = stringResource(if (searchOverlayVisible) R.string.pc_hide_search else R.string.search),
                         tint = Color.White,
                         modifier = Modifier.size(if (searchOverlayVisible) 18.dp else 16.dp)
                     )

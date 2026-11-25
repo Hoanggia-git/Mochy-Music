@@ -29,6 +29,7 @@ import com.mochyy.mochymusic.ui.screens.settings.devspace.DevPlaygroundRoute
 import com.mochyy.mochymusic.ui.screens.settings.importsync.ImportSyncRoute
 import com.mochyy.mochymusic.ui.screens.settings.integrations.IntegrationsRoute
 import com.mochyy.mochymusic.ui.screens.settings.integrations.ScrobbleServiceRoute
+import com.mochyy.mochymusic.ui.screens.settings.integrations.backup.BackupRoute
 import com.mochyy.mochymusic.ui.screens.settings.integrations.discord.DiscordRoute
 import com.mochyy.mochymusic.ui.screens.settings.modules.ModulesRoute
 import com.mochyy.mochymusic.ui.screens.settings.storage.StorageRoute
@@ -46,12 +47,15 @@ val SettingsPaneRoutes = setOf(
     "audio_quality",
     "crossmix_settings",
     "general_settings",
+    PlaybackSettingsRoute,
+    NowPlayingSettingsRoute,
     "customisation_settings",
     "gesture_settings",
     StorageRoute,
     IntegrationsRoute,
     DiscordRoute,
     ScrobbleServiceRoute,
+    BackupRoute,
     ProxySettingsRoute,
     ModulesRoute,
     "module/{id}",
@@ -59,7 +63,6 @@ val SettingsPaneRoutes = setOf(
     "experimental_settings",
     "playback_diagnostics",
     ImportSyncRoute,
-    com.mochyy.mochymusic.ui.screens.settings.tvlink.TvLinkRoute,
     "import_providers",
     "import_tunemymusic",
     "import_progress",
@@ -67,8 +70,8 @@ val SettingsPaneRoutes = setOf(
     DevPlaygroundRoute,
 )
 
-// how wide the list is beside the open page
-val SettingsListWidth = 360.dp
+// how wide the list is beside the open page: a phone's column on a phone on its side, a little more on a tablet
+private fun settingsListWidth(windowWidth: androidx.compose.ui.unit.Dp) = (windowWidth * 0.38f).coerceIn(300.dp, 400.dp)
 
 // the list on a wide screen: the page open beside it, so its bubble stays lit
 @Immutable
@@ -96,7 +99,8 @@ fun NavController.openSettingsPage(route: String) {
 // the list at the left of a wide screen, a hairline between it and the page beside it
 @Composable
 fun SettingsListPane(navController: NavController, selectedRoute: String?, modifier: Modifier = Modifier) {
-    Box(modifier = modifier.width(SettingsListWidth).fillMaxHeight()) {
+    val windowWidth = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp.dp
+    Box(modifier = modifier.width(settingsListWidth(windowWidth)).fillMaxHeight()) {
         MochySettingsScreen(navController = navController, pane = SettingsPane(selectedRoute))
         Box(
             modifier = Modifier

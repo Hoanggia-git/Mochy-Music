@@ -2,6 +2,7 @@ package com.mochyy.mochymusic.crossmix
 
 import com.mochyy.mochymusic.constants.CrossmixLength
 import com.mochyy.mochymusic.lyrics.LyricsUtils
+import com.mochyy.mochymusic.mixit.MixItSpec
 import kotlin.math.abs
 import kotlin.math.ln
 import kotlin.math.max
@@ -29,9 +30,27 @@ data class CrossmixPlan(
     val inStartBeat: Float,
     /** 0..1 how much the two voices would overlap, and so how far they're given bands of their own */
     val yieldAmount: Float = 0f,
+    /** non-null when this plan was built from a user's Mix It custom transition */
+    val mixIt: MixItSpec? = null,
+    /** fractional beat length for custom Mix It windows so exact millisecond lengths are preserved */
+    val exactLengthBeats: Float? = null,
+    /** fractional swap beat for custom Mix It transitions */
+    val exactSwapBeat: Float? = null,
 ) {
+    /** length in beats used by the audio renderer */
+    val effectiveLengthBeats: Float get() = exactLengthBeats ?: lengthBeats.toFloat()
+
+    /** swap beat used by the audio renderer */
+    val effectiveSwapBeat: Float get() = exactSwapBeat ?: swapBeat.toFloat()
+
+    /** beats of ringing tail after the hand-over */
+    val effectiveTailBeats: Int get() = mixIt?.tailBeats ?: style.tailBeats
+
+    /** display name for logs and status */
+    val displayLabel: String get() = mixIt?.label ?: style.label
+
     /** incoming media time heard at a transition beat */
-    fun inMediaAt(beat: Float): Double = inCueMs + (beat - swapBeat) * inMediaPerBeat
+    fun inMediaAt(beat: Float): Double = inCueMs + (beat - effectiveSwapBeat) * inMediaPerBeat
 
     /** where the incoming player starts */
     val inStartMs: Long get() = inMediaAt(inStartBeat).toLong().coerceAtLeast(0L)
@@ -40,10 +59,10 @@ data class CrossmixPlan(
     fun outMediaAt(beat: Float): Double = outStartMs + beat * outBeatMs
 
     /** the outgoing player can be let go after this (tails included) */
-    val outReleaseMs: Long get() = outMediaAt(lengthBeats + style.tailBeats + 1f).toLong()
+    val outReleaseMs: Long get() = outMediaAt(effectiveLengthBeats + effectiveTailBeats + 1f).toLong()
 
     /** after this beat the incoming song is untouched */
-    val inSettledBeat: Float get() = lengthBeats + 8f
+    val inSettledBeat: Float get() = effectiveLengthBeats + 8f
 }
 
 /** what the planner sees of each song; durationMs 0 when it isn't known yet */
@@ -78,6 +97,8 @@ object CrossmixPlanner {
     private const val CalmEnergy = 0.45f
     // the nudge a pair's own move gets among the unmatched ones, so close calls differ from pair to pair but never between plays
     private const val GestureBonus = 0.3f
+    // with always mix on, a blend is never over in a blink, so it's heard as two songs mixing and not as a quick fade
+    private const val AlwaysMixMinOverlapMs = 6_000.0
 
     /** the one transition that suits these two songs best, within the listener's settings; the same two songs always get the same mix */
     fun plan(
@@ -90,10 +111,10 @@ object CrossmixPlanner {
         val naturalEnd = naturalEnd(outgoing)
         val windowStart = (outgoing.durationMs - MaxLeadMs).coerceAtLeast(0L)
 
-        if (out == null || !out.isBeatReliable) {
-            return smoothFade(outgoing, incoming, naturalEnd)
-        }
-        val outGrid = out.localGrid((naturalEnd - 12_000L).coerceAtLeast(0L)) ?: return smoothFade(outgoing, incoming, naturalEnd)
+        // nothing to plan around: a plain fade, or with always mix on, a real blend counted in seconds
+        fun noPlan() = if (settings.alwaysMix) forcedBlend(outgoing, incoming, naturalEnd, out) else smoothFade(outgoing, incoming, naturalEnd)
+        if (out == null || !out.isBeatReliable) return noPlan()
+        val outGrid = out.localGrid((naturalEnd - 12_000L).coerceAtLeast(0L)) ?: return noPlan()
 
         val maxSpeedUp = settings.tempoMatch.maxSpeedUp
         val tempo = tempoFactor(out, inc, maxSpeedUp)
@@ -125,6 +146,8 @@ object CrossmixPlanner {
         // every way this style could play between these two songs; a style the listener picked by hand is never scored out
         fun consider(style: CrossmixStyle, picked: Boolean) {
             if (style.needsBeatMatch && tempo == null) return
+            // always mix keeps to the styles where both songs really play together; a style picked by hand still wins
+            if (settings.alwaysMix && !picked && !style.blendsBoth) return
             var styleFit = styleFit(style, out, inc, tempo != null, keyDistance, outLines, naturalEnd, vocalPair)
             if (picked) styleFit = max(styleFit, 0f) else if (styleFit <= -5f) return
             val bonus = if (tempo == null && style == gesture) GestureBonus else 0f
@@ -132,7 +155,7 @@ object CrossmixPlanner {
             val locked = tempo != null && (style.needsBeatMatch || !style.entersAtEnd)
             for (length in style.lengths) {
                 // overlaps stay short: long ones only for two calm songs that lock together, or when the listener asked for long
-                if (!style.entersAtEnd && !overlapFits(length, length * outGrid.periodMs, tempo != null, calmMatch, settings.length)) continue
+                if (!style.entersAtEnd && !overlapFits(length, length * outGrid.periodMs, tempo != null, calmMatch, settings)) continue
                 val swap = style.swapAt(length)
                 for (exit in exits) {
                     // the hand-over sits on one of this song's bars, counted on the beats fitted around it, and the whole move fits in its last 30 s
@@ -192,7 +215,7 @@ object CrossmixPlanner {
             }
         }
 
-        if (candidates.isEmpty()) return smoothFade(outgoing, incoming, naturalEnd)
+        if (candidates.isEmpty()) return noPlan()
         // best fit wins, a dead heat goes to the longer then earlier-listed style so the pick never depends on search order
         return candidates.maxWith(
             compareBy<Candidate> { it.score }
@@ -384,14 +407,17 @@ object CrossmixPlanner {
     }
 
     /** whether a blend this long suits the pair: long only for calm songs that lock together, short for two that can't, never over in a blink; the listener's length setting stretches or shrinks the caps */
-    private fun overlapFits(length: Int, lengthMs: Double, matched: Boolean, calmMatch: Boolean, setting: CrossmixLength): Boolean {
+    private fun overlapFits(length: Int, lengthMs: Double, matched: Boolean, calmMatch: Boolean, settings: CrossmixSettings): Boolean {
+        val setting = settings.length
         val longest = when {
             !matched -> MaxUnmatchedOverlapMs
             calmMatch -> MaxCalmOverlapMs
             else -> MaxOverlapMs
         } * setting.scale
-        val shortest = if (60_000.0 * length / lengthMs >= 140.0) MinFastOverlapMs else MinOverlapMs
-        return lengthMs in shortest..longest && (length < 32 || calmMatch || setting == CrossmixLength.LONG)
+        val counted = if (60_000.0 * length / lengthMs >= 140.0) MinFastOverlapMs else MinOverlapMs
+        val shortest = if (settings.alwaysMix) max(counted, AlwaysMixMinOverlapMs) else counted
+        // a short setting can cap below always mix's floor: it still gets a little room above it
+        return lengthMs in shortest..max(shortest * 1.35, longest) && (length < 32 || calmMatch || setting == CrossmixLength.LONG)
     }
 
     /** a place the outgoing song can hand over, on the beats fitted around it */
@@ -560,6 +586,43 @@ object CrossmixPlanner {
             inStartBeat = 0f,
         )
     }
+
+    /** always mix with no beat to plan around: still a real blend, this song sinking under a filter while the next comes up through it, after the last sung line where that fits */
+    private fun forcedBlend(
+        outgoing: CrossmixTrackInput,
+        incoming: CrossmixTrackInput,
+        naturalEnd: Long,
+        out: TrackAnalysis?,
+    ): CrossmixPlan {
+        val style = CrossmixStyle.FilterSweep
+        val beats = 16
+        // the song's own count when it has one, even a shaky one, so the sweep moves with it; else 10 s over the 16
+        val beatMs = out?.bpm?.takeIf { it in 70f..180f }?.let { 60_000.0 / it } ?: (ForcedBlendMs / beats)
+        val lengthMs = (beatMs * beats).toLong()
+        val lines = parseLines(outgoing.lyrics)
+        val latestStart = (naturalEnd - lengthMs).coerceAtLeast(0L)
+        val earliestStart = (outgoing.durationMs - MaxLeadMs).coerceAtLeast(0L)
+        val afterLyrics = lines.lastOrNull { it.end in earliestStart..latestStart }?.end
+        val start = (afterLyrics ?: latestStart).coerceIn(earliestStart, latestStart.coerceAtLeast(earliestStart))
+        val swap = style.swapAt(beats)
+        val cue = incoming.analysis?.leadingSilenceEndMs?.coerceAtMost(MaxEntryMs) ?: 0L
+        return CrossmixPlan(
+            style = style,
+            variation = 0,
+            lengthBeats = beats,
+            swapBeat = swap,
+            outStartMs = start,
+            outBeatMs = beatMs,
+            // the next song starts from its first sound at beat 0, so it's that far in by the swap
+            inCueMs = (cue + swap * beatMs).toLong(),
+            inMediaPerBeat = beatMs,
+            inSpeed = 1f,
+            beatMatched = false,
+            inStartBeat = 0f,
+        )
+    }
+
+    private const val ForcedBlendMs = 10_000.0
 
     /** where the song really ends: before any trailing silence */
     private fun naturalEnd(track: CrossmixTrackInput): Long {

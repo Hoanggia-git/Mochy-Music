@@ -102,9 +102,9 @@ internal fun EnableCard(entry: ModuleEntry, onChange: (Boolean) -> Unit) {
     }
 }
 
-/** when it came in, from where, which version and who made it */
+/** when it came in, from where, which version and who made it; [onRaise] puts a covered look back on top */
 @Composable
-internal fun InfoCard(entry: ModuleEntry) {
+internal fun InfoCard(entry: ModuleEntry, onRaise: () -> Unit) {
     val info = entry.module.info
     val added = entry.addedAt?.let { DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(it)) }
     val source = when (val origin = entry.origin) {
@@ -123,16 +123,27 @@ internal fun InfoCard(entry: ModuleEntry) {
         info.author?.takeIf { it.isNotBlank() }?.let { InfoLine(stringResource(R.string.module_info_author), it) }
         InfoLine(stringResource(R.string.module_info_status), moduleStatus(entry))
         GlassNote(entry)
+        CoveredNote(entry, onRaise)
     }
 }
 
-/** a look that brings its own glass or player shaders says when this phone can't run them, or when one didn't compile and why */
+/** a look that's on but sits under another one bringing the same things says which, and can go back on top */
+@Composable
+private fun CoveredNote(entry: ModuleEntry, onRaise: () -> Unit) {
+    val above = entry.coveredBy?.takeIf { entry.active } ?: return
+    Spacer(Modifier.height(8.dp))
+    Text(stringResource(R.string.module_look_covered, above), fontFamily = InterFontFamily, fontSize = 12.sp, lineHeight = 17.sp, color = PageSoftText)
+    Spacer(Modifier.height(10.dp))
+    PillButton(text = stringResource(R.string.module_look_raise), filled = true, onClick = onRaise)
+}
+
+/** a look that brings its own glass, player or bar shaders says when this phone can't run them, or when one didn't compile and why */
 @Composable
 private fun GlassNote(entry: ModuleEntry) {
     val skin = (entry.module as? SkinSource)?.skin ?: return
     if (skin.glass == null && skin.playerShaders.isEmpty()) return
     val glassProblem = ActiveSkin.glassProblem?.takeIf { it.first == entry.id }?.second
-    val shaderProblem = ActiveSkin.shaderProblem?.takeIf { it.first == entry.id }?.second
+    val shaderProblem = ActiveSkin.shaderProblems[entry.id]
     val text = when {
         glassProblem != null -> stringResource(R.string.module_glass_problem, glassProblem)
         shaderProblem != null -> stringResource(R.string.module_shader_problem, shaderProblem)
@@ -256,4 +267,47 @@ internal fun PageSectionTitle(text: String, subtitle: String? = null) {
         Text(it, fontFamily = InterFontFamily, fontSize = 12.sp, lineHeight = 17.sp, color = PageSoftText)
     }
     Spacer(Modifier.height(12.dp))
+}
+
+/** where the module updates from, and the button that brings the newer copy in once one is out */
+@Composable
+internal fun UpdateCard(entry: ModuleEntry, updating: Boolean, checking: Boolean, onUpdate: () -> Unit, onCheck: () -> Unit) {
+    val source = entry.source ?: return
+    val update = entry.update
+    val checked = entry.checkedAt?.let { android.text.format.DateUtils.getRelativeTimeSpanString(it).toString() }
+    val headline = when {
+        update?.version != null -> stringResource(R.string.module_update_ready, update.version)
+        update != null -> stringResource(R.string.module_update_ready_unnamed)
+        checked != null -> stringResource(R.string.module_update_none, checked)
+        else -> stringResource(R.string.module_update_never)
+    }
+    Spacer(Modifier.height(10.dp))
+    PageCard(padding = 16) {
+        Text(stringResource(R.string.module_update_title), fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 11.sp, color = PageSoftText)
+        Spacer(Modifier.height(6.dp))
+        Text(headline, fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, lineHeight = 20.sp, color = Color.White)
+        Spacer(Modifier.height(2.dp))
+        Text(stringResource(R.string.module_update_from, source.label), fontFamily = InterFontFamily, fontSize = 12.sp, color = PageSoftText)
+        Spacer(Modifier.height(12.dp))
+        if (update != null) {
+            PillButton(
+                text = when {
+                    updating -> stringResource(R.string.module_updating)
+                    update.version != null -> stringResource(R.string.module_update_to, update.version)
+                    else -> stringResource(R.string.module_update_now)
+                },
+                icon = R.drawable.download,
+                filled = true,
+                busy = updating,
+                onClick = onUpdate,
+            )
+        } else {
+            PillButton(
+                text = stringResource(if (checking) R.string.module_checking else R.string.module_update_check),
+                icon = R.drawable.refresh,
+                busy = checking,
+                onClick = onCheck,
+            )
+        }
+    }
 }

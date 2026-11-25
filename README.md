@@ -1,4 +1,4 @@
-<img width="1799" height="927" alt="fdb" src="https://github.com/user-attachments/assets/98652d23-a7cd-4c6f-945e-96a85273f61f" />
+<img width="1799" height="927" alt="Frame 420" src="https://github.com/user-attachments/assets/c5e1d307-ecc4-4c26-a88f-f4f468c8e434" />
 
 <div align="center">
 
@@ -206,6 +206,18 @@ Mochy is an independent, unofficial project made for personal and educational us
 
 ---
 
+<!-- mochy-credit:start · f208ad37 -->
+## Forking Mochy
+
+Forks are welcome, that's what open source is for! Just two asks:
+
+- **Keep the credit.** If you rename it, please keep credits of this app, the other project that helped mochy possible.
+- **Keep it free.** Mochy is not monetized and never will be. Please don't put features behind a paywall. A donation page is fine.
+
+<!-- mochy-credit:end -->
+
+---
+
 ## These incredible project helped mochy a lot! check them out too :3
 
 - **ViviMusic** by [vivizzz007Z](https://github.com/vivizzz007Z) )[Their repo](https://github.com/vivizzz007/vivi-music)) -- For the base app. This app is a fork from this project.
@@ -216,6 +228,8 @@ Mochy is an independent, unofficial project made for personal and educational us
 - **LRCLib** by [tranxuanthang](https://github.com/tranxuanthang) ([Repository](https://github.com/tranxuanthang/lrclib) / [Website](https://lrclib.net/)) -- For synchronized LRC lyrics provider integration.
 - **Monochrome Music** by [monochrome-music](https://github.com/monochrome-music) ([Repository](https://github.com/monochrome-music/monochrome) / ([Website](https://monochrome.st)) -- Flac streams, visit their web, very cool one.
 - **Auto Eq** ([Web](https://autoeq.app)) -- The equalizer database
+- **lrc.red** ([Web](https://lrc.red)) -- Word-timed lyrics for millions of songs, free for everyone
+- **InnertubeX** by [nyxiereal](https://github.com/nyxiereal) [Their repo](https://github.com/metrolistGroup/innertubex) For The Youtube stream extration lib
 
 ---
 
@@ -226,7 +240,8 @@ These are the open source apis and server we get gets its lyrics, streams and da
 - **LyricsPlus** by [Ibra Al Tabian](https://github.com/ibratabian17) ([repos](https://github.com/ibratabian17/LyricsPlus)) s
 - **Better Lyrics API** by [Boidushya](https://github.com/boidushya) ([repos](https://github.com/better-lyrics/api)) 
 - **LRCLIB** by [tranxuanthang](https://github.com/tranxuanthang) ([repos](https://github.com/tranxuanthang/lrclib) / [Website](https://lrclib.net/)) 
-- **SimpMusic Lyrics** by [maxrave-dev](https://github.com/maxrave-dev) ([repos](https://github.com/maxrave-dev/SimpMusic)) 
+- **SimpMusic Lyrics** by [maxrave-dev](https://github.com/maxrave-dev) ([repos](https://github.com/maxrave-dev/SimpMusic))
+- **Unison Lyrics** ([repos](https://github.com/better-lyrics/unison))
 
 ---
 ## Star History

@@ -30,6 +30,11 @@ namespace {
 // the ints kotlin hands over per plan, in UsbPass.kt's order
 constexpr int kPlanInts = 18;
 
+// urbs in flight and how long each one plays: about 64 ms queued at the dac, so a worker woken late in the background or with the screen off doesn't run it dry (issue 234)
+constexpr int kSlots = 8;
+constexpr uint32_t kUrbUs = 8000;
+constexpr int kMaxPackets = 64;
+
 struct Plan {
     int control, streaming, alt, uac2, clock, selector, selectorPin;
     int endpoint, attributes, maxPacket, interval, rateControl;
@@ -149,7 +154,10 @@ public:
             if (control(fd, 0xa1, 0x01, 0x0100, index, &now, 4) == 4 && now == wanted) return true;
             control(fd, 0x21, 0x01, 0x0100, index, &wanted, 4);
             now = 0;
-            return control(fd, 0xa1, 0x01, 0x0100, index, &now, 4) == 4 && now == wanted;
+            bool ok = control(fd, 0xa1, 0x01, 0x0100, index, &now, 4) == 4 && now == wanted;
+            // many uac2 dacs need a few milliseconds for their pll to lock after a rate change, else the first audio bursts with static
+            if (ok) usleep(15000);
+            return ok;
         }
         if (!p.rateControl) return true;
         uint8_t wanted[3] = {static_cast<uint8_t>(p.rate), static_cast<uint8_t>(p.rate >> 8), static_cast<uint8_t>(p.rate >> 16)};
@@ -157,7 +165,9 @@ public:
         control(fd, 0x22, 0x01, 0x0100, static_cast<uint16_t>(p.endpoint), wanted, 3);
         // some uac1 dacs take the rate but can't say it back; only a different answer counts as refused
         int read = control(fd, 0xa2, 0x81, 0x0100, static_cast<uint16_t>(p.endpoint), now, 3);
-        return read != 3 || memcmp(now, wanted, 3) == 0;
+        bool ok = read != 3 || memcmp(now, wanted, 3) == 0;
+        if (ok) usleep(15000);
+        return ok;
     }
 
     bool configure(const Plan &p) {
@@ -176,7 +186,7 @@ public:
         frameBytes = bytes;
         nominal = perPacket;
         pace = perPacket;
-        packetsPerUrb = static_cast<int>(std::min<uint32_t>(std::max<uint32_t>(4000 / period, 1), 32));
+        packetsPerUrb = static_cast<int>(std::min<uint32_t>(std::max<uint32_t>(kUrbUs / period, 1), kMaxPackets));
         return true;
     }
 
@@ -212,7 +222,7 @@ public:
     void fill(Slot *slot) {
         usbdevfs_urb *urb = slot->urb;
         size_t total = 0;
-        size_t lengths[32];
+        size_t lengths[kMaxPackets];
         for (int i = 0; i < packetsPerUrb; ++i) {
             size_t frames = nextPacketFrames();
             lengths[i] = std::min(frames * frameBytes, static_cast<size_t>(plan.maxPacket) / frameBytes * frameBytes);
@@ -274,9 +284,9 @@ public:
     }
 
     void run() {
-        // best effort: a late packet is a click, so the worker asks to be scheduled first
-        setpriority(PRIO_PROCESS, 0, -16);
-        for (int i = 0; i < 6; ++i) slots.push_back(new Slot(packetsPerUrb, static_cast<size_t>(plan.maxPacket)));
+        // best effort: a late packet is a click, so the worker asks to be scheduled first, as urgently as android lets an app
+        if (setpriority(PRIO_PROCESS, 0, -19) != 0) setpriority(PRIO_PROCESS, 0, -16);
+        for (int i = 0; i < kSlots; ++i) slots.push_back(new Slot(packetsPerUrb, static_cast<size_t>(plan.maxPacket)));
         if (plan.feedback >= 0 && plan.feedbackMaxPacket > 0) feedbackSlot = new Slot(1, static_cast<size_t>(plan.feedbackMaxPacket));
         for (Slot *s : slots) {
             fill(s);
@@ -384,8 +394,8 @@ Java_com_mochyy_mochymusic_playback_audio_pass_PassNative_usbOpen(JNIEnv *env, j
         throwState(env, "the dac wouldn't run at this song's rate");
         return 0;
     }
-    // about 200 ms of audio waits here, the same as android keeps for a normal track
-    size_t ringBytes = std::max<size_t>(static_cast<size_t>(stream->plan.rate) / 5, 4096) * stream->frameBytes;
+    // a second of audio waits here, so the player can sleep through a slow background wake-up; pause and seek don't wait on it
+    size_t ringBytes = std::max<size_t>(static_cast<size_t>(stream->plan.rate), 4096) * stream->frameBytes;
     stream->ring.resize(ringBytes);
     stream->worker = std::thread([stream] { stream->run(); });
     return reinterpret_cast<jlong>(stream);
@@ -444,6 +454,8 @@ Java_com_mochyy_mochymusic_playback_audio_pass_PassNative_usbFlush(JNIEnv *, job
     s->ringStart = 0;
     s->ringSize = 0;
     s->played = 0;
+    s->pace = s->nominal;
+    s->remainder = 0;
     // packets already with the dac finish, but no longer count towards the new start
     s->generation++;
 }

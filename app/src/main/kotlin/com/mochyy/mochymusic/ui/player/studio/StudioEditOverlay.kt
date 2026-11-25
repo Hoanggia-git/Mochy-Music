@@ -66,6 +66,7 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Constraints
@@ -99,12 +100,12 @@ import com.mochyy.mochymusic.ui.utils.stableStatusBars
 import com.mochyy.mochymusic.ui.utils.stableStatusBarsPadding
 
 internal val PlayerBackgroundStyle.studioName: String
-    get() = when (this) {
-        PlayerBackgroundStyle.COVER_GRADIENT -> "Cover gradient"
-        PlayerBackgroundStyle.SOLID -> "Solid"
-        PlayerBackgroundStyle.DARK_GRADIENT -> "Dark gradient"
+    @Composable get() = when (this) {
+        PlayerBackgroundStyle.COVER_GRADIENT -> stringResource(R.string.ps_studio_bg_cover_gradient)
+        PlayerBackgroundStyle.SOLID -> stringResource(R.string.ps_studio_bg_solid)
+        PlayerBackgroundStyle.DARK_GRADIENT -> stringResource(R.string.ps_studio_bg_dark_gradient)
         PlayerBackgroundStyle.APPLE_MUSIC -> "Apple Music"
-        PlayerBackgroundStyle.AMBIENT -> "Ambient"
+        PlayerBackgroundStyle.AMBIENT -> stringResource(R.string.ps_studio_bg_ambient)
     }
 
 private fun inter(size: TextUnit, weight: FontWeight = FontWeight.Bold) = studioText(size, weight)
@@ -188,16 +189,28 @@ fun StudioEditOverlay(
  * beside it, and the content under it frosted and darkened toward the top.
  */
 @Composable
-private fun StudioTopBar(studio: PlayerStudioState, glassState: GlassState) {
+internal fun StudioTopBar(
+    studio: PlayerStudioState,
+    glassState: GlassState,
+    // a module player's editor names its own: the open part's title, its own hint ("" for none), its own way back
+    titleOverride: String? = null,
+    subtitleOverride: String? = null,
+    onBack: () -> Unit = { studio.back() },
+) {
     val r = rememberResponsive()
     val statusTop = WindowInsets.stableStatusBars.asPaddingValues().calculateTopPadding()
-    val title by remember(studio) {
+    val editBackground = stringResource(R.string.ps_studio_edit_background)
+    val editCover = stringResource(R.string.ps_studio_edit_cover)
+    val editMiddle = stringResource(R.string.ps_studio_edit_middle)
+    val editMenu = stringResource(R.string.ps_studio_edit_menu)
+    val editPlayer = stringResource(R.string.ps_studio_edit_player)
+    val title by remember(studio, editBackground, editCover, editMiddle, editMenu, editPlayer) {
         derivedStateOf {
             when (studio.stage) {
-                StudioStage.COVER -> if (studio.backdrop.value > 0.5f) "Edit Background" else "Edit Cover"
-                StudioStage.MIDDLE -> "Edit Middle part"
-                StudioStage.MENU -> "Edit Menu"
-                else -> "Edit Player"
+                StudioStage.COVER -> if (studio.backdrop.value > 0.5f) editBackground else editCover
+                StudioStage.MIDDLE -> editMiddle
+                StudioStage.MENU -> editMenu
+                else -> editPlayer
             }
         }
     }
@@ -252,11 +265,11 @@ private fun StudioTopBar(studio: PlayerStudioState, glassState: GlassState) {
                     .size(30.dp)
                     .clip(CircleShape)
                     .background(Color.Black.copy(alpha = 0.45f))
-                    .clickable(enabled = studio.stage >= StudioStage.EDIT) { studio.back() },
+                    .clickable(enabled = studio.stage >= StudioStage.EDIT) { onBack() },
             ) {
                 Icon(
                     painter = painterResource(R.drawable.arrow_back_ios),
-                    contentDescription = "Back",
+                    contentDescription = stringResource(R.string.back_button_desc),
                     tint = Color.White,
                     modifier = Modifier.size(16.dp).offset(x = 2.dp),
                 )
@@ -264,7 +277,7 @@ private fun StudioTopBar(studio: PlayerStudioState, glassState: GlassState) {
             Spacer(Modifier.width(14.dp))
             Column {
                 AnimatedContent(
-                    targetState = title,
+                    targetState = titleOverride ?: title,
                     transitionSpec = {
                         (slideInVertically(tween(420)) { it } + fadeIn(tween(300))) togetherWith
                             (slideOutVertically(tween(360)) { -it } + fadeOut(tween(220)))
@@ -274,13 +287,13 @@ private fun StudioTopBar(studio: PlayerStudioState, glassState: GlassState) {
                     Text(text, color = Color.White, style = inter(StudioType.Title))
                 }
                 // what the first page's tiles are for; it goes as a tile opens
-                val onTiles = studio.stage == StudioStage.EDIT
+                val onTiles = if (subtitleOverride != null) subtitleOverride.isNotEmpty() else studio.stage == StudioStage.EDIT
                 androidx.compose.animation.AnimatedVisibility(
                     visible = onTiles,
                     enter = fadeIn(tween(240)) + androidx.compose.animation.expandVertically(tween(300)),
                     exit = fadeOut(tween(160)) + androidx.compose.animation.shrinkVertically(tween(260)),
                 ) {
-                    Text("Hold to adjust position, tap to edit", color = Color.White.copy(alpha = 0.7f), style = inter(StudioType.Subtitle, FontWeight.Medium))
+                    Text(subtitleOverride?.takeIf { it.isNotEmpty() } ?: stringResource(R.string.ps_studio_hold_to_adjust), color = Color.White.copy(alpha = 0.7f), style = inter(StudioType.Subtitle, FontWeight.Medium))
                 }
             }
         }
@@ -395,10 +408,19 @@ private fun CoverEditor(
                 }
             ),
     ) {
+        val landscape = w > h
+        val startInset = WindowInsets.navigationBars.asPaddingValues().calculateLeftPadding(androidx.compose.ui.unit.LayoutDirection.Ltr)
         // every other cover style, waiting beside the live cover; only the ones in view are drawn
         coverStyles.forEachIndexed { index, style ->
             key(style) {
-                val box = remember(style, maxW, maxH, statusTop, coverOffset) { coverArtBox(style, maxW, maxH, statusTop, coverOffset) }
+                val box = remember(style, maxW, maxH, statusTop, coverOffset, landscape, startInset) {
+                    if (landscape) {
+                        val r = com.mochyy.mochymusic.ui.player.flagship.landscapeCoverBounds(style, maxW, maxH, startInset)
+                        com.mochyy.mochymusic.ui.player.customize.CoverArtBox(r.left.dp, r.top.dp, r.width.dp, r.height.dp)
+                    } else {
+                        coverArtBox(style, maxW, maxH, statusTop, coverOffset)
+                    }
+                }
                 Box(
                     modifier = Modifier
                         .offset(box.x, box.y)
@@ -441,7 +463,14 @@ private fun CoverEditor(
                 ) {
                     if (index != studio.backdropCommitted) {
                         PlayerBackgroundPreview(style = style, thumbnailUrl = track.thumbnailUrl, width = maxW, height = maxH, animate = false, warp = false, modifier = Modifier.fillMaxSize())
-                        val box = remember(coverStyle, maxW, maxH, statusTop, coverOffset) { coverArtBox(coverStyle, maxW, maxH, statusTop, coverOffset) }
+                        val box = remember(coverStyle, maxW, maxH, statusTop, coverOffset, landscape, startInset) {
+                            if (landscape) {
+                                val r = com.mochyy.mochymusic.ui.player.flagship.landscapeCoverBounds(coverStyle, maxW, maxH, startInset)
+                                com.mochyy.mochymusic.ui.player.customize.CoverArtBox(r.left.dp, r.top.dp, r.width.dp, r.height.dp)
+                            } else {
+                                coverArtBox(coverStyle, maxW, maxH, statusTop, coverOffset)
+                            }
+                        }
                         Box(Modifier.offset(box.x, box.y).size(box.width, box.height)) {
                             CoverArt(coverStyle, track, false, queue.currentIndex)
                         }
@@ -512,15 +541,29 @@ private fun CoverEditor(
                 }
             }
         }
+        // in landscape put the style picker controls cleanly on the right beside the cover so nothing overlaps
         Column(
             modifier = Modifier
-                .align(Alignment.BottomStart)
-                .fillMaxWidth()
-                .padding(start = 26.dp, end = 26.dp, bottom = navBottom + 60.dp)
+                .align(if (landscape && !inBackdrop) Alignment.CenterEnd else Alignment.BottomStart)
+                .then(
+                    if (landscape && !inBackdrop) {
+                        Modifier
+                            .width(maxW * 0.46f)
+                            .padding(start = 12.dp, end = 28.dp)
+                    } else if (landscape) {
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(start = 26.dp, end = 26.dp, bottom = navBottom + 44.dp)
+                    } else {
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(start = 26.dp, end = 26.dp, bottom = navBottom + 60.dp)
+                    },
+                )
                 .graphicsLayer { translationY = (1f - studio.cover.value) * 320.dp.toPx() },
         ) {
             AnimatedContent(
-                targetState = (if (inBackdrop) "BACKGROUND - %03d" else "STYLE - %03d").format(shownIndex + 1),
+                targetState = stringResource(if (inBackdrop) R.string.ps_studio_background_n else R.string.ps_studio_style_n, shownIndex + 1),
                 transitionSpec = { (slideInVertically { it } + fadeIn()) togetherWith (slideOutVertically { -it } + fadeOut()) },
                 label = "studioStyleNumber",
             ) { label ->
@@ -552,7 +595,7 @@ private fun CoverEditor(
                     Icon(painterResource(R.drawable.tune), null, tint = Color.Black, modifier = Modifier.size(14.dp))
                 }
                 Spacer(Modifier.width(14.dp))
-                Text("Show more option for this cover", color = Color.White, style = inter(StudioType.Body, FontWeight.SemiBold))
+                Text(stringResource(R.string.ps_studio_more_options), color = Color.White, style = inter(StudioType.Body, FontWeight.SemiBold))
             }
         }
 
@@ -561,7 +604,7 @@ private fun CoverEditor(
         val nudge by bounce.animateFloat(0f, 1f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "studioChevronNudge")
         Icon(
             painter = painterResource(R.drawable.expand_more),
-            contentDescription = if (inBackdrop) "Back to covers" else "Backgrounds",
+            contentDescription = stringResource(if (inBackdrop) R.string.ps_studio_back_to_covers else R.string.ps_studio_backgrounds),
             tint = Color.White.copy(alpha = 0.7f),
             modifier = Modifier
                 .align(Alignment.BottomCenter)

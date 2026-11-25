@@ -122,16 +122,7 @@ fun SelectionSongMenu(
 
     AddToPlaylistDialog(
         isVisible = showChoosePlaylistDialog,
-        onGetSong = { playlist ->
-            coroutineScope.launch(Dispatchers.IO) {
-                songSelection.forEach { song ->
-                    playlist.playlist.browseId?.let { browseId ->
-                        YouTube.addToPlaylist(browseId, song.id)
-                    }
-                }
-            }
-            songSelection.map { it.id }
-        },
+        onGetSong = { songSelection.map { it.id } },
         onDismiss = {
             showChoosePlaylistDialog = false
         },
@@ -207,7 +198,7 @@ fun SelectionSongMenu(
                             onDismiss()
                             playerConnection.playQueue(
                                 ListQueue(
-                                    title = "Selection",
+                                    title = context.getString(R.string.pc_selection),
                                     items = songSelection.map { it.toMediaItem() },
                                 ),
                             )
@@ -267,7 +258,7 @@ fun SelectionSongMenu(
                                     onDismiss()
                                     playerConnection.playQueue(
                                         ListQueue(
-                                            title = "Selection",
+                                            title = context.getString(R.string.pc_selection),
                                             items = songSelection.shuffled().map { it.toMediaItem() },
                                         ),
                                     )
@@ -394,7 +385,8 @@ fun SelectionSongMenu(
                                         )
                                     },
                                     onClick = {
-                                        songSelection.forEach { song ->
+                                        // imported files are already on the phone, with nothing online to download
+                                        songSelection.filterNot { it.song.isLocal }.forEach { song ->
                                             val downloadRequest =
                                                 DownloadRequest
                                                     .Builder(song.id, song.id.toUri())

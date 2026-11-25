@@ -66,6 +66,7 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -88,6 +89,7 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -161,53 +163,40 @@ internal val TrackShape = RoundedCornerShape(9.dp)
 // a pressed track lights a pill from one side of the screen to the other, like the swipe slab
 private val TrackHighlight = RoundedHighlight(cornerRadius = 100.dp, spillX = (-10).dp)
 
-internal val PlaylistTitleStyle = TextStyle(
-    fontFamily = InterFontFamily,
-    fontWeight = FontWeight.Bold,
-    fontSize = 24.sp,
-    lineHeight = 28.sp,
-    letterSpacing = PlaylistTracking,
+private val PlaylistTitleStyleCache = com.mochyy.mochymusic.ui.theme.headingTextStyle(
+    TextStyle(fontWeight = FontWeight.Bold, fontSize = 24.sp, lineHeight = 28.sp, letterSpacing = PlaylistTracking),
 )
-internal val PlaylistCreatorStyle = TextStyle(
-    fontFamily = InterFontFamily,
-    fontWeight = FontWeight.Bold,
-    fontSize = 15.sp,
-    lineHeight = 18.sp,
-    letterSpacing = (-0.04).em,
+internal val PlaylistTitleStyle: TextStyle get() = PlaylistTitleStyleCache.current()
+
+private val PlaylistCreatorStyleCache = com.mochyy.mochymusic.ui.theme.subheadingTextStyle(
+    TextStyle(fontWeight = FontWeight.Bold, fontSize = 15.sp, lineHeight = 18.sp, letterSpacing = (-0.04).em),
 )
-internal val PlaylistStatsStyle = TextStyle(
-    fontFamily = InterFontFamily,
-    fontWeight = FontWeight.SemiBold,
-    fontSize = 11.sp,
-    lineHeight = 14.sp,
-    letterSpacing = (-0.02).em,
+internal val PlaylistCreatorStyle: TextStyle get() = PlaylistCreatorStyleCache.current()
+
+private val PlaylistStatsStyleCache = com.mochyy.mochymusic.ui.theme.globalTextStyle(
+    TextStyle(fontWeight = FontWeight.SemiBold, fontSize = 11.sp, lineHeight = 14.sp, letterSpacing = (-0.02).em),
 )
-internal val PillLabelStyle = TextStyle(
-    fontFamily = InterFontFamily,
-    fontWeight = FontWeight.Bold,
-    fontSize = 16.sp,
-    letterSpacing = PlaylistTracking,
+internal val PlaylistStatsStyle: TextStyle get() = PlaylistStatsStyleCache.current()
+
+private val PillLabelStyleCache = com.mochyy.mochymusic.ui.theme.subheadingTextStyle(
+    TextStyle(fontWeight = FontWeight.Bold, fontSize = 16.sp, letterSpacing = PlaylistTracking),
 )
-internal val TrackTitleStyle = TextStyle(
-    fontFamily = InterFontFamily,
-    fontWeight = FontWeight.SemiBold,
-    fontSize = 14.sp,
-    lineHeight = 17.sp,
-    letterSpacing = (-0.03).em,
+internal val PillLabelStyle: TextStyle get() = PillLabelStyleCache.current()
+
+private val TrackTitleStyleCache = com.mochyy.mochymusic.ui.theme.globalTextStyle(
+    TextStyle(fontWeight = FontWeight.SemiBold, fontSize = 14.sp, lineHeight = 17.sp, letterSpacing = (-0.03).em),
 )
-internal val TrackSubtitleStyle = TextStyle(
-    fontFamily = InterFontFamily,
-    fontWeight = FontWeight.Medium,
-    fontSize = 11.5.sp,
-    lineHeight = 14.sp,
-    letterSpacing = (-0.02).em,
+internal val TrackTitleStyle: TextStyle get() = TrackTitleStyleCache.current()
+
+private val TrackSubtitleStyleCache = com.mochyy.mochymusic.ui.theme.globalTextStyle(
+    TextStyle(fontWeight = FontWeight.Medium, fontSize = 11.5.sp, lineHeight = 14.sp, letterSpacing = (-0.02).em),
 )
-internal val SectionTitleStyle = TextStyle(
-    fontFamily = InterFontFamily,
-    fontWeight = FontWeight.Bold,
-    fontSize = 16.sp,
-    letterSpacing = PlaylistTracking,
+internal val TrackSubtitleStyle: TextStyle get() = TrackSubtitleStyleCache.current()
+
+private val SectionTitleStyleCache = com.mochyy.mochymusic.ui.theme.subheadingTextStyle(
+    TextStyle(fontWeight = FontWeight.Bold, fontSize = 16.sp, letterSpacing = PlaylistTracking),
 )
+internal val SectionTitleStyle: TextStyle get() = SectionTitleStyleCache.current()
 internal val ReceiptSmallStyle = TextStyle(
     fontFamily = FontFamily.Monospace,
     fontWeight = FontWeight.Medium,
@@ -253,8 +242,17 @@ fun <A> featuredArtistsOf(
         .take(limit)
         .map { (artistId, names) -> FeaturedArtistUi(id = artistId, name = names.first()) }
 
+// the featured artists counted off the main thread, liked songs and the cache run to thousands and made the page hitch as it opened
+@Composable
+fun <A> rememberFeaturedArtists(key: Any?, artists: () -> List<A>, id: (A) -> String?, name: (A) -> String): List<FeaturedArtistUi> {
+    val featured by produceState(emptyList<FeaturedArtistUi>(), key) {
+        value = withContext(Dispatchers.Default) { featuredArtistsOf(artists(), id, name) }
+    }
+    return featured
+}
+
 // passes the scaffold's cover composable down to PlaylistHeader when classic or minimal style draws a framed cover
-private val LocalPlaylistFramedCover = staticCompositionLocalOf<(@Composable (Modifier) -> Unit)?> { null }
+internal val LocalPlaylistFramedCover = staticCompositionLocalOf<(@Composable (Modifier) -> Unit)?> { null }
 
 /** the cover band at the top of a playlist, shared by the header item and the backdrop behind it */
 @Composable
@@ -400,6 +398,27 @@ fun PlaylistDetailScaffold(
     // the Edit order pill is frosted even with the cover still showing, so the glass has to run
     // before the bar collapses
     val pillNeedsGlass = rememberUpdatedState(modeBar is PlaylistModeBar.EditOrder)
+
+    // on its side the cover stays at the left, and the title and the songs take the right
+    if (com.mochyy.mochymusic.ui.utils.isLandscapeLayout()) {
+        PlaylistSideBySide(
+            sharedElementKey = sharedElementKey,
+            coverUrl = coverUrl,
+            cover = cover,
+            background = background,
+            lazyListState = lazyListState,
+            contentPadding = contentPadding,
+            onBackClick = onBackClick,
+            onBackLongClick = onBackLongClick,
+            onMoreClick = onMoreClick,
+            topBarOverride = topBarOverride,
+            modeBar = modeBar,
+            modifier = modifier,
+            overlay = overlay,
+            content = content,
+        )
+        return
+    }
 
     CompositionLocalProvider(LocalPlaylistFramedCover provides framedCover) {
     Box(
@@ -670,7 +689,7 @@ private fun PlaylistClassicBackdrop(
 }
 
 @Composable
-private fun PlaylistTopBar(
+internal fun PlaylistTopBar(
     glassState: GlassState,
     morph: () -> Float,
     coverUrl: String?,
@@ -795,7 +814,7 @@ private fun PlaylistNormalBarRow(
             ) {
                 Icon(
                     painter = painterResource(R.drawable.more_horiz),
-                    contentDescription = "Options",
+                    contentDescription = stringResource(R.string.options),
                     tint = Color.White,
                     modifier = Modifier.size(18.dp),
                 )
@@ -865,7 +884,7 @@ private fun BackPill(
         ) {
             Icon(
                 painter = painterResource(R.drawable.arrow_back_ios),
-                contentDescription = "Back",
+                contentDescription = stringResource(R.string.back_button_desc),
                 tint = Color.White,
                 modifier = Modifier
                     .size(16.dp)
@@ -950,11 +969,15 @@ fun PlaylistHeader(
     below: (@Composable () -> Unit)? = null,
     // opens the list's own song search, from a round button beside shuffle
     onSearchClick: (() -> Unit)? = null,
+    // sits at the far end of the button row, like the library pages' grid and list switch
+    actionsEnd: (@Composable () -> Unit)? = null,
 ) {
     val playlistStyle by rememberEnumPreference(PlaylistStyleKey, defaultValue = PlaylistStyle.FLOW)
     val framedCover = LocalPlaylistFramedCover.current
-    val useMinimal = compact || playlistStyle == PlaylistStyle.MINIMAL
-    val useClassic = !compact && playlistStyle == PlaylistStyle.CLASSIC
+    // on its side the cover is already at the left, so the block heads the songs without a band or a framed cover of its own
+    val sideBySide = LocalPlaylistSideBySide.current
+    val useMinimal = compact || (!sideBySide && playlistStyle == PlaylistStyle.MINIMAL)
+    val useClassic = !sideBySide && !compact && playlistStyle == PlaylistStyle.CLASSIC
 
     val body: @Composable () -> Unit = {
         Column(
@@ -1008,12 +1031,12 @@ fun PlaylistHeader(
                 )
             }
             Spacer(Modifier.height(16.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 PlayPill(isPlaying = isPlaying, onClick = onPlayClick)
                 Spacer(Modifier.width(9.dp))
                 CircleAction(
                     icon = R.drawable.shuffle,
-                    contentDescription = "Shuffle",
+                    contentDescription = stringResource(R.string.shuffle),
                     onClick = onShuffleClick,
                     spinOnClick = true,
                 )
@@ -1029,9 +1052,13 @@ fun PlaylistHeader(
                     Spacer(Modifier.width(4.dp))
                     CircleAction(
                         icon = if (isSaved) R.drawable.library_add_check else R.drawable.library_add,
-                        contentDescription = if (isSaved) "In your library" else "Add to library",
+                        contentDescription = stringResource(if (isSaved) R.string.pc_in_library else R.string.add_to_library),
                         onClick = onSaveClick,
                     )
+                }
+                if (actionsEnd != null) {
+                    Spacer(Modifier.weight(1f))
+                    actionsEnd()
                 }
             }
             if (sortControl != null) {
@@ -1046,7 +1073,10 @@ fun PlaylistHeader(
         }
     }
 
-    if (useMinimal || useClassic) {
+    if (sideBySide) {
+        // the list already starts under the back button on its side, so the block needs no gap above it
+        Column(modifier = modifier.fillMaxWidth()) { body() }
+    } else if (useMinimal || useClassic) {
         Column(
             modifier = modifier
                 .fillMaxWidth()
@@ -1084,13 +1114,10 @@ private fun playlistClassicCoverSize(): Dp = (LocalConfiguration.current.screenW
 @Composable
 private fun playlistClassicHeaderHeight(): Dp = playlistCompactHeaderTop() + playlistClassicCoverSize() + 22.dp + 120.dp
 
-internal val PlaylistCompactTitleStyle = TextStyle(
-    fontFamily = InterFontFamily,
-    fontWeight = FontWeight.Bold,
-    fontSize = 32.sp,
-    lineHeight = 36.sp,
-    letterSpacing = PlaylistTracking,
+private val PlaylistCompactTitleStyleCache = com.mochyy.mochymusic.ui.theme.headingTextStyle(
+    TextStyle(fontWeight = FontWeight.Bold, fontSize = 32.sp, lineHeight = 36.sp, letterSpacing = PlaylistTracking),
 )
+internal val PlaylistCompactTitleStyle: TextStyle get() = PlaylistCompactTitleStyleCache.current()
 
 /**
  * an album's description where the stats line used to be: two lines, and a tap opens the rest in
@@ -1151,7 +1178,7 @@ internal fun PlayPill(isPlaying: Boolean, onClick: () -> Unit) {
             label = "playPillLabel",
         ) { playing ->
             Text(
-                text = if (playing) "Pause" else "Play",
+                text = stringResource(if (playing) R.string.pause else R.string.play),
                 style = PillLabelStyle,
                 color = PillContent,
             )
@@ -1344,7 +1371,7 @@ fun <T : Enum<T>> PlaylistSortControl(
                         {
                             Icon(
                                 painter = painterResource(R.drawable.expand_more),
-                                contentDescription = if (descending) "Descending" else "Ascending",
+                                contentDescription = stringResource(if (descending) R.string.pc_sort_descending else R.string.pc_sort_ascending),
                                 tint = Color.White,
                                 modifier = Modifier
                                     .size(18.dp)
@@ -1388,7 +1415,8 @@ fun PlaylistTrackRow(
     liked: Boolean? = null,
     onLikeClick: (() -> Unit)? = null,
 ) {
-    val band by animateFloatAsState(if (selected) 1f else 0f, tween(180), label = "selectedBand")
+    // starts only when picking begins, so the rows of a long playlist mount without a coroutine each
+    val band by com.mochyy.mochymusic.ui.utils.animateFloatOnChange(if (selected) 1f else 0f, tween(180))
     // Keep album rows as compact as the other tracks while giving the heart a 48dp tap target.
     val verticalPadding = if (trailing == null && liked != null && onLikeClick != null) 5.dp else 9.dp
     Row(
@@ -1408,14 +1436,14 @@ fun PlaylistTrackRow(
             modifier = Modifier
                 .size(39.dp)
                 .then(coverModifier)
-                .clip(coverShape)
-                .background(BoneColor)
+                .background(BoneColor, coverShape)
         ) {
             ItemThumbnail(
                 thumbnailUrl = thumbnailUrl,
                 isActive = isActive,
                 isPlaying = isPlaying,
                 shape = coverShape,
+                imageSizePx = 256,
                 modifier = Modifier.fillMaxSize(),
             )
         }
@@ -1424,12 +1452,11 @@ fun PlaylistTrackRow(
                 .weight(1f)
                 .padding(horizontal = 11.dp)
         ) {
-            Text(
+            com.mochyy.mochymusic.ui.component.TitleWithMarks(
                 text = title,
+                songId = songId,
                 style = TrackTitleStyle,
                 color = Color.White.copy(alpha = if (isActive) 1f else 0.94f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
             )
             Text(
                 text = subtitle,
@@ -1439,7 +1466,6 @@ fun PlaylistTrackRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        com.mochyy.mochymusic.ui.component.OnDeviceMarks(songId, modifier = Modifier.padding(end = 2.dp))
         if (trailing == null && liked != null && onLikeClick != null) {
             Box(
                 contentAlignment = Alignment.Center,
@@ -1519,14 +1545,14 @@ fun PlaylistEndOfLine(
                 .height(25.dp)
         ) {
             Text(
-                text = "$songCount ${if (songCount == 1) "SONG" else "SONGS"}",
+                text = pluralStringResource(R.plurals.pc_detail_songs, songCount, songCount).uppercase(),
                 style = ReceiptSmallStyle,
                 color = Color.White.copy(alpha = 0.6f),
                 maxLines = 1,
                 modifier = Modifier.weight(1f),
             )
             Text(
-                text = "END OF LINE",
+                text = stringResource(R.string.pc_detail_end_of_line),
                 style = ReceiptCenterStyle,
                 color = Color.White.copy(alpha = 0.78f),
                 maxLines = 1,
@@ -1534,7 +1560,7 @@ fun PlaylistEndOfLine(
             )
             val minutes = (totalSeconds + 30) / 60
             Text(
-                text = "$minutes ${if (minutes == 1) "MINUTE" else "MINUTES"}",
+                text = pluralStringResource(R.plurals.pc_detail_minutes, minutes, minutes).uppercase(),
                 style = ReceiptSmallStyle,
                 color = Color.White.copy(alpha = 0.6f),
                 maxLines = 1,
@@ -1598,7 +1624,7 @@ fun FeaturedArtistsRow(
     artists: List<FeaturedArtistUi>,
     onArtistClick: (FeaturedArtistUi) -> Unit,
     modifier: Modifier = Modifier,
-    title: String = "Featured Artist",
+    title: String = stringResource(R.string.pc_featured_artist),
     onTitleClick: (() -> Unit)? = null,
     showChevron: Boolean = true,
 ) {

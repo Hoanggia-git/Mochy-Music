@@ -841,6 +841,8 @@
     <string name="discord_behaviour">Behaviour</string>
     <string name="discord_clear_on_pause">Clear status when paused</string>
     <string name="discord_clear_on_pause_desc">Takes the song off your profile as soon as you pause, and puts it back when you play again.</string>
+    <string name="discord_login_note">Opens Discord\'s own login page in your browser. Your password stays with Discord.</string>
+    <string name="discord_permissions_note">Discord\'s page also lists your friends and invites, because they come bundled with status sharing. Mochy only reads your name and picture, and shows what you\'re playing.</string>
     <string name="discord_button_text_variables">Variables: {song_name}, {artist_name}, {album_name}</string>
     <string name="discord_rpc_preview">Rich Presence Preview</string>
     <string name="discord_presence">Presence</string>
@@ -855,6 +857,13 @@
     <string name="speed_dial">Jump Back In</string>
     <string name="pin_to_speed_dial">Pin to library</string>
     <string name="unpin_from_speed_dial">Unpin from library</string>
+    <string name="speed_dial_label">Speed Dial</string>
+    <string name="speed_dial_summon_title">Summon\nspeed dial</string>
+    <string name="speed_dial_summon">Summon</string>
+    <string name="speed_dial_owner">%1$s’s</string>
+    <string name="speed_dial_owner_you">Your</string>
+    <string name="speed_dial_random">Random</string>
+    <string name="speed_dial_picking">Picking…</string>
     <string name="randomize_home_order">Randomize Home Screen Order</string>
     <string name="randomize_home_order_desc">Randomly reorder home screen sections with weighted priorities</string>
 
@@ -900,6 +909,31 @@
 
     <!-- Onboarding -->
     <string name="welcome_to">Welcome to</string>
+    <string name="welcome_lets_listen">Let\'s start listening!</string>
+    <string name="welcome_tap_anywhere">Tap anywhere to continue</string>
+    <!-- "welcome" in twenty languages drifting behind the welcome page, the same in every language on purpose -->
+    <string-array name="welcome_words" translatable="false">
+        <item>WELCOME</item>
+        <item>SELAMAT DATANG</item>
+        <item>ようこそ</item>
+        <item>欢迎</item>
+        <item>환영합니다</item>
+        <item>BIENVENIDO</item>
+        <item>BIENVENUE</item>
+        <item>WILLKOMMEN</item>
+        <item>BENVENUTO</item>
+        <item>BEM-VINDO</item>
+        <item>ДОБРО ПОЖАЛОВАТЬ</item>
+        <item>أهلاً وسهلاً</item>
+        <item>स्वागत है</item>
+        <item>ยินดีต้อนรับ</item>
+        <item>CHÀO MỪNG</item>
+        <item>HOŞ GELDİNİZ</item>
+        <item>WELKOM</item>
+        <item>SUGENG RAWUH</item>
+        <item>MABUHAY</item>
+        <item>ΚΑΛΩΣ ΗΡΘΑΤΕ</item>
+    </string-array>
     <string name="welcome_preparing_subtitle">Let\'s get everything ready for you.</string>
     <string name="get_started">Get Started</string>
 
@@ -988,7 +1022,6 @@
     <string name="video_mode">Full video</string>
     <string name="video_mode_exit">Exit video mode</string>
     <string name="video_mode_close_player">Close player</string>
-    <string name="video_mode_rotate">Rotate player</string>
     <string name="video_mode_exit_full_screen">Exit full screen</string>
     <string name="video_mode_finding">Looking for the video…</string>
     <string name="video_mode_no_video">No video for this song. The lyrics still play here.</string>
@@ -1010,7 +1043,25 @@
     <string name="video_quality_not_loaded">Sizes show up once the video loads</string>
     <string name="video_quality_4k">4K</string>
     <string name="video_quality_sharp_desc">If the video and your phone can, uses way more data</string>
+    <string name="canvas_quality">Animated cover quality</string>
+    <string name="canvas_quality_now">%1$s · %2$s</string>
+    <string name="canvas_quality_best">Best</string>
+    <string name="canvas_quality_best_desc">The sharpest version, up to 4K if your phone can play it. Uses more data</string>
+    <string name="canvas_quality_light">Lighter</string>
+    <string name="canvas_quality_light_desc">A smaller version that starts faster and saves data</string>
+    <string name="canvas_best_quality">Sharpest animated covers</string>
+    <string name="canvas_best_quality_desc">Plays the best version there is, up to 4K. Data saver turns it off</string>
     <string name="video_mode_song_info">Song info</string>
+    <string name="recap_tap_hint">tap here for your recap!!</string>
+    <string name="experimental_unlock_landscape">Unlock landscape</string>
+    <string name="experimental_unlock_landscape_desc">Let the app turn sideways into its wide layout</string>
+    <string name="experimental_unlock_landscape_detail">Off, the whole app stays upright however you hold your phone. On, it turns with your phone and lays pages out side by side. Still being worked on, so some screens may look off</string>
+    <string name="player_rotate">Rotate</string>
+    <string name="player_turn_upright">Turn upright</string>
+    <string name="experimental_stream_backend">Stream backend</string>
+    <string name="experimental_stream_backend_innertubex">InnerTubeX, then classic</string>
+    <string name="experimental_stream_backend_classic">Classic only</string>
+    <string name="experimental_stream_backend_detail">How YouTube songs find their stream. InnerTubeX tries first, and anything it can\'t play goes to the classic finder, so songs keep playing either way. Classic only skips InnerTubeX. Tap to switch</string>
     <string name="video_mode_whole_video">Show the whole video</string>
     <string name="video_mode_whole_video_desc">Off, the video is zoomed in to fill the screen</string>
     <plurals name="video_mode_seek_seconds">
@@ -1038,7 +1089,7 @@
     <string name="song_share_type_title">Type</string>
     <string name="song_share_type_subtitle">Select background type</string>
     <string name="song_share_type_video">Video</string>
-    <string name="song_share_type_video_hint">Your own, the music video or the moving cover</string>
+    <string name="song_share_type_video_hint">Flowing cover, YouTube video, your own, or moving cover</string>
     <string name="song_share_type_still">Static</string>
     <string name="song_share_type_still_hint">A picture, the music\'s colours or a plain colour</string>
     <string name="song_share_type_link">Copy link</string>
@@ -1054,6 +1105,23 @@
     <string name="song_share_card_opacity">Opacity</string>
     <string name="song_share_card_blur">Blur</string>
     <string name="song_share_card_blur_note">Blur goes away when you share straight to Instagram or Facebook, where the card turns into a sticker</string>
+    <string name="song_share_card_only">Card only</string>
+    <string name="song_share_card_only_hint">Remove the background and share just the card</string>
+    <string name="song_share_editor_hint_card_only">Tap the card to style its look or background</string>
+    <string name="song_share_card_bg">Card background</string>
+    <string name="song_share_card_bg_colour">Colour</string>
+    <string name="song_share_card_bg_blurred">Blurred cover</string>
+    <string name="song_share_card_bg_liquid">Flowing cover</string>
+    <string name="song_share_card_bg_moving">Moving cover</string>
+    <string name="song_share_card_bg_music_video">Music video</string>
+    <string name="song_share_card_bg_youtube">YouTube</string>
+    <string name="song_share_card_bg_own_video">Your video</string>
+    <string name="song_share_bg_liquid_cover">Flowing cover</string>
+    <string name="song_share_bg_liquid_cover_hint">The cover swirling and warping softly in motion</string>
+    <string name="song_share_bg_youtube_video">Find YouTube video</string>
+    <string name="song_share_bg_youtube_video_hint">Tap the circle to search YouTube for a video</string>
+    <string name="song_share_bg_youtube_picker_subtitle">Search YouTube for a background video</string>
+    <string name="song_share_bg_youtube_failed">Couldn\'t load that video. Try another one.</string>
     <string name="song_share_bg_own_video">Add your own video</string>
     <string name="song_share_bg_own_video_hint">Tap the circle to pick a video from your phone</string>
     <string name="song_share_bg_music_video">The music video</string>
@@ -1106,6 +1174,10 @@
     <string name="song_share_style_too_many">Too many words for this one</string>
     <string name="song_share_as_video">Share as video</string>
     <string name="song_share_as_video_hint">The song plays and the lyrics flow</string>
+    <string name="song_share_romanisation_hint">How the words are read, under each line</string>
+    <string name="song_share_romanisation_none">These lyrics read fine as they are</string>
+    <string name="song_share_romanisation_main_hint">The card sings the romanisation, the original goes under it</string>
+    <string name="song_share_translation_hint">Each line in your language, under it</string>
     <string name="song_share_caption">%1$s · %2$s</string>
     <!-- a meta app id from developers.facebook.com; while it's empty instagram and facebook get the finished video instead of a story with a sticker -->
     <string name="meta_app_id" translatable="false"></string>
@@ -1125,6 +1197,21 @@
         <item quantity="one">Undone, but 1 like couldn\'t come off YouTube. Try again later.</item>
         <item quantity="other">Undone, but %1$d likes couldn\'t come off YouTube. Try again later.</item>
     </plurals>
+    <string name="yt_sync_lost_likes_title">Bring back lost likes</string>
+    <string name="yt_sync_lost_likes_desc">Puts back liked songs a sync took off by mistake</string>
+    <plurals name="yt_sync_lost_likes_dialog_title">
+        <item quantity="one">Bring back 1 like?</item>
+        <item quantity="other">Bring back %1$d likes?</item>
+    </plurals>
+    <string name="yt_sync_lost_likes_dialog_body">These are songs a sync unliked, songs your imports liked, and likes from before the last sync. A song you unliked yourself comes back too, so you may need to unlike a few again. Nothing changes on YouTube.</string>
+    <string name="yt_sync_lost_likes_none_title">No lost likes</string>
+    <string name="yt_sync_lost_likes_none_body">Every like the app has a record of is already in Liked songs. Likes that are still on YouTube come back on the next sync.</string>
+    <string name="yt_sync_lost_likes_confirm">Bring back</string>
+    <string name="yt_sync_lost_likes_running">Bringing back your likes…</string>
+    <plurals name="yt_sync_lost_likes_done">
+        <item quantity="one">1 like is back in Liked songs.</item>
+        <item quantity="other">%1$d likes are back in Liked songs.</item>
+    </plurals>
     <string name="module_youtube_name">YouTube Music</string>
     <string name="module_youtube_desc">Sync likes, library, playlists and history</string>
     <string name="about_song_provided_by">provided by %1$s</string>
@@ -1135,7 +1222,7 @@
 
     <!-- skips that cross over, the studio version of music videos, recent searches -->
     <string name="settings_blend_skips">Blend skips</string>
-    <string name="settings_blend_skips_desc">Loads the songs either side ahead, so skip and back crossfade straight into them</string>
+    <string name="settings_blend_skips_desc">Loads the songs either side ahead, so skips, swipes and songs you pick mix straight in, over your fade length and through your effect</string>
     <string name="settings_blend_ahead">Songs loaded ahead</string>
     <plurals name="settings_blend_ahead_value">
         <item quantity="one">%d song</item>
@@ -1162,6 +1249,24 @@
     <string name="crossmix_tempo_full">Full</string>
     <string name="crossmix_stunts_title">Stunts</string>
     <string name="crossmix_stunts_desc">Backspins, tape stops, risers and drops when the energy jumps between songs</string>
+    <string name="crossmix_always_mix_title">Always mix</string>
+    <string name="crossmix_always_mix_desc">Both songs play together on every change, even when their beats don\'t line up. Off lets Crossmix drop the next song in at the very end, or just fade.</string>
+    <string name="crossmix_mixing_note">Mixxing…</string>
+    <string name="transition_title">Transition</string>
+    <string name="transition_music_heading">Music transitions</string>
+    <string name="transition_off">Off (I hate having fun)</string>
+    <string name="transition_off_desc">Each song ends before the next one starts</string>
+    <string name="transition_selected">Selected</string>
+    <string name="transition_auto">Auto Crossfade</string>
+    <string name="transition_auto_desc">A smooth %1$d-second blend from every song into the next</string>
+    <string name="transition_manual">Manual Crossfade</string>
+    <string name="transition_manual_desc">Pick how long each song blends into the next</string>
+    <string name="transition_manual_length">Length</string>
+    <string name="transition_seconds">%1$ds</string>
+    <string name="transition_crossmix">CrossMix</string>
+    <string name="transition_transport_heading">Pause, play, forward and backward transitions</string>
+    <string name="transition_fade_title">Enable fade</string>
+    <string name="transition_fade_desc">Eases the music out when you pause, skip or pick another song, and back in when you play</string>
     <string name="settings_persistent_shuffle">Keep shuffle on</string>
     <string name="settings_persistent_shuffle_desc">Shuffle stays on when you play another playlist or album, until you turn it off</string>
     <string name="auto_download_new_songs">Download new songs</string>
@@ -1188,4 +1293,23 @@
     <string name="recent_search_playlist">Playlist · %1$s</string>
     <string name="recent_search_artist">Artist</string>
     <string name="recent_search_remove">Remove from recent searches</string>
+    <string name="floating_lyrics_open">Open Mochy</string>
+    <string name="floating_lyrics_close">Close</string>
+    <string name="floating_lyrics_never">Don\'t show again</string>
+    <string name="floating_lyrics_turned_off">Floating lyrics are off. You can turn them back on in Settings.</string>
+    <string name="floating_lyrics_permission">Let Mochy show over other apps so the lyrics can float</string>
+    <string name="swipe_action_library">Add or remove from library</string>
+    <string name="swipe_action_details">View details</string>
+    <string name="menu_ai_translation">AI translation</string>
+    <string name="menu_change_output">Change device output</string>
+    <string name="menu_add_to_liked">Add to liked</string>
+    <string name="menu_remove_from_liked">Remove from liked</string>
+    <string name="menu_edit_player">Edit player</string>
+    <string name="menu_keep_screen_on">Keep screen on</string>
+    <string name="menu_sort_by">Sort by</string>
+    <string name="menu_resync_title">Re-sync with %1$s</string>
+    <string name="menu_resync_desc">Add the songs that are new on %1$s</string>
+    <string name="menu_resync_paste">Paste its %1$s link</string>
+    <string name="menu_choose_version">Choose different version</string>
+    <string name="menu_choose_version_desc">Wrong recording? Pick the right one from a list</string>
 </resources>

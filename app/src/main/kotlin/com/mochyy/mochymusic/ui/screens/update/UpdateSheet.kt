@@ -61,8 +61,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -73,7 +78,12 @@ import androidx.core.graphics.drawable.toBitmap
 import com.mochyy.mochymusic.BuildConfig
 import com.mochyy.mochymusic.R
 import com.mochyy.mochymusic.core.updater.GithubRelease
+import com.mochyy.mochymusic.core.updater.UpdateChannel
 import com.mochyy.mochymusic.core.updater.UpdateState
+import com.mochyy.mochymusic.core.updater.canLeaveNightly
+import com.mochyy.mochymusic.core.updater.installedIsNightly
+import com.mochyy.mochymusic.core.updater.saveUpdateChannel
+import com.mochyy.mochymusic.core.updater.updateChannel
 import com.mochyy.mochymusic.core.updater.apkFileFor
 import com.mochyy.mochymusic.core.updater.downloadApk
 import com.mochyy.mochymusic.core.updater.formatBytes
@@ -91,17 +101,19 @@ import com.mochyy.mochymusic.ui.player.menu.MenuSurface
 import com.mochyy.mochymusic.ui.screens.donate.showSupportSheet
 import kotlinx.coroutines.launch
 import com.mochyy.mochymusic.ui.component.RemoteFocus
+import com.mochyy.mochymusic.ui.component.sheetHandleRoom
 
 @Composable
 fun rememberUpdateState(): androidx.compose.runtime.State<UpdateState> {
+    val context = LocalContext.current
     val state = remember { mutableStateOf<UpdateState>(UpdateState.Checking) }
-    LaunchedEffect(Unit) { state.value = checkUpdate(force = false) }
+    LaunchedEffect(Unit) { state.value = checkUpdate(updateChannel(context), force = false) }
     return state
 }
 
-/** asks github (or the shared copy, unless force is set) whether a newer release is out */
-private suspend fun checkUpdate(force: Boolean): UpdateState =
-    getLatestRelease(force).fold(
+/** asks github (or the shared copy, unless force is set) whether a newer release is out on the channel */
+private suspend fun checkUpdate(channel: UpdateChannel, force: Boolean): UpdateState =
+    getLatestRelease(channel, force).fold(
         onSuccess = { release ->
             when {
                 release == null -> UpdateState.UpToDate
@@ -115,7 +127,7 @@ private suspend fun checkUpdate(force: Boolean): UpdateState =
 /** shows the app version sheet as a PopupSheet, see docs/popup-sheet.skill.md */
 fun PopupSheetState.showUpdateSheet(updateState: UpdateState, onOpenDevSpace: (Int) -> Unit = {}) {
     val popup = this
-    show(buttonBar = { SheetPrimaryButton(text = "Done", onClick = popup::dismiss) }) {
+    show(buttonBar = { SheetPrimaryButton(text = stringResource(R.string.done), onClick = popup::dismiss) }) {
         UpdateSheetContent(initialState = updateState, popup = popup, onOpenDevSpace = onOpenDevSpace)
     }
 }
@@ -163,27 +175,37 @@ private fun ColumnScope.UpdateSheetContent(
     popup: PopupSheetState,
     onOpenDevSpace: (Int) -> Unit,
 ) {
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    var channel by remember { mutableStateOf(updateChannel(context)) }
     var state by remember { mutableStateOf(initialState) }
-    var latest by remember { mutableStateOf((initialState as? UpdateState.Available)?.release) }
+    // the newest plain release, which decides the badge and whether a nightly may switch back
+    var latestRelease by remember { mutableStateOf<GithubRelease?>(null) }
     var previous by remember { mutableStateOf<GithubRelease?>(null) }
 
     suspend fun refresh(force: Boolean) {
-        state = checkUpdate(force)
+        state = checkUpdate(channel, force)
         // a failed check keeps what it knew, so the rows don't vanish when offline
-        latest = getLatestRelease().getOrNull() ?: latest
-        previous = getPreviousRelease().getOrNull() ?: previous
+        getLatestRelease(UpdateChannel.Release).onSuccess { latestRelease = it }
+        getPreviousRelease(channel).onSuccess { previous = it }
     }
-    // the shared copy answers instantly when the app already checked on launch
-    LaunchedEffect(Unit) { refresh(force = false) }
+    // the shared copy answers instantly when the app already checked on launch, and again after a channel switch
+    LaunchedEffect(channel) { refresh(force = false) }
     val checkAgain: () -> Unit = {
         if (state !is UpdateState.Checking) {
             state = UpdateState.Checking
             scope.launch { refresh(force = true) }
         }
     }
+    fun switchTo(target: UpdateChannel) {
+        saveUpdateChannel(context, target)
+        state = UpdateState.Checking
+        channel = target
+    }
 
     val installed = shortVersion(BuildConfig.VERSION_NAME)
+    // the page starts under the sheet's handle now, so the ring and the first row sit that much lower
+    val room = sheetHandleRoom()
     Box(Modifier.fillMaxWidth()) {
         // centred just inside the sheet's top-right corner so its edge cuts the ring off, no size of its own so it never pushes content around
         VersionRing(
@@ -193,12 +215,12 @@ private fun ColumnScope.UpdateSheetContent(
                 .layout { measurable, constraints ->
                     val placeable = measurable.measure(constraints.copy(minWidth = 0, minHeight = 0, maxWidth = Constraints.Infinity, maxHeight = Constraints.Infinity))
                     layout(0, 0) {
-                        placeable.place(x = (-195).dp.roundToPx(), y = (-134).dp.roundToPx())
+                        placeable.place(x = (-195).dp.roundToPx(), y = (room - 134.dp).roundToPx())
                     }
                 },
         )
 
-        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(top = room)) {
             Spacer(Modifier.height(6.dp))
             Box(
                 modifier = Modifier
@@ -226,7 +248,7 @@ private fun ColumnScope.UpdateSheetContent(
                     letterSpacing = (-2).sp,
                 )
                 Spacer(Modifier.width(14.dp))
-                ChannelBadge(latest)
+                ChannelBadge(latestRelease)
             }
 
             Spacer(Modifier.height(16.dp))
@@ -237,12 +259,14 @@ private fun ColumnScope.UpdateSheetContent(
             )
 
             Spacer(Modifier.height(22.dp))
-            Text("Actions", fontSize = 17.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp)
+            Text(stringResource(R.string.update_actions), fontSize = 17.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.5).sp)
             Spacer(Modifier.height(10.dp))
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 ActionRow(
                     icon = R.drawable.refresh,
-                    label = if (state is UpdateState.Checking) "Checking…" else "Check for update",
+                    label = if (state is UpdateState.Checking) stringResource(
+                                R.string.update_checking,
+                            ) else stringResource(R.string.update_check_for_update),
                     spinning = state is UpdateState.Checking,
                     onClick = checkAgain,
                 )
@@ -254,26 +278,42 @@ private fun ColumnScope.UpdateSheetContent(
                     previous?.let { older ->
                         ActionRow(
                             icon = R.drawable.history,
-                            label = "Downgrade to ${shortVersion(older.version)}",
+                            label = stringResource(R.string.update_downgrade_to, shortVersion(older.version)),
                             onClick = { popup.showUpdateDetailSheet(older) },
                         )
                     }
                 }
-                ActionRow(
-                    icon = R.drawable.bedtime,
-                    label = "Switch to nightly",
-                    hint = "Not out yet",
-                    enabled = false,
-                    onClick = {},
-                )
+                if (channel == UpdateChannel.Release) {
+                    ActionRow(
+                        icon = R.drawable.bedtime,
+                        label = stringResource(R.string.channel_switch_to_nightly),
+                        onClick = { popup.showPathChangeSheet(toNightly = true) { switchTo(UpdateChannel.Nightly) } },
+                    )
+                } else {
+                    val canLeave = canLeaveNightly(latestRelease)
+                    ActionRow(
+                        icon = R.drawable.update,
+                        label = stringResource(R.string.channel_switch_to_release),
+                        hint = if (canLeave) null else stringResource(R.string.channel_release_waits),
+                        enabled = canLeave,
+                        onClick = {
+                            // nothing nightly installed yet, so there's nothing to warn about
+                            if (installedIsNightly) {
+                                popup.showPathChangeSheet(toNightly = false) { switchTo(UpdateChannel.Release) }
+                            } else {
+                                switchTo(UpdateChannel.Release)
+                            }
+                        },
+                    )
+                }
                 ActionRow(
                     icon = R.drawable.info,
-                    label = "About app",
+                    label = stringResource(R.string.about_app),
                     onClick = { popup.showAboutSheet(onOpenDevSpace = onOpenDevSpace) },
                 )
                 ActionRow(
                     icon = R.drawable.favorite,
-                    label = "Help us!",
+                    label = stringResource(R.string.update_help_us),
                     onClick = { popup.showSupportSheet() },
                 )
             }
@@ -284,11 +324,11 @@ private fun ColumnScope.UpdateSheetContent(
 
 /** which channel this build is: nightly says so, newer than any release is beta, the rest is stable */
 @Composable
-private fun ChannelBadge(latest: GithubRelease?) {
-    val aheadOfReleases = latest != null &&
-        parseFullVersion(latest.version).copy(buildNumber = 0) < parseFullVersion(BuildConfig.VERSION_NAME).copy(buildNumber = 0)
+private fun ChannelBadge(latestRelease: GithubRelease?) {
+    val aheadOfReleases = latestRelease != null &&
+        parseFullVersion(latestRelease.version).copy(buildNumber = 0) < parseFullVersion(BuildConfig.VERSION_NAME).copy(buildNumber = 0)
     val label = when {
-        BuildConfig.IS_NIGHTLY -> "NIGHTLY"
+        installedIsNightly -> "NIGHTLY"
         aheadOfReleases -> "BETA"
         else -> StableLabel
     }
@@ -331,17 +371,17 @@ private fun UpdateStatusCard(
         ) { shown ->
             when (shown) {
                 is UpdateState.Available -> StatusRow(
-                    title = "New update!",
+                    title = stringResource(R.string.update_status_new_update),
                     big = shortVersion(shown.release.version),
-                    action = "UPDATE NOW",
+                    action = stringResource(R.string.update_action_update_now),
                     onAction = { onUpdate(shown.release) },
                 )
-                UpdateState.Checking -> StatusRow(title = "Looking for updates", big = "…", pulsing = true)
-                UpdateState.UpToDate -> StatusRow(title = "You're on the latest", big = "All good")
+                UpdateState.Checking -> StatusRow(title = stringResource(R.string.update_status_looking), big = "…", pulsing = true)
+                UpdateState.UpToDate -> StatusRow(title = stringResource(R.string.update_status_latest), big = stringResource(R.string.update_status_all_good))
                 is UpdateState.Failed -> StatusRow(
-                    title = "Couldn't check for updates",
-                    big = "Offline?",
-                    action = "TRY AGAIN",
+                    title = stringResource(R.string.update_status_failed),
+                    big = stringResource(R.string.update_status_offline),
+                    action = stringResource(R.string.update_action_try_again),
                     onAction = onRetry,
                 )
             }
@@ -483,13 +523,20 @@ private fun ColumnScope.UpdateDetailContent(
     var error by remember { mutableStateOf<String?>(null) }
     val progress = remember { mutableFloatStateOf(0f) }
 
+    // a tv remote starts on Install, the back row at the top would close this the moment OK is pressed
+    val installFocus = remember { FocusRequester() }
+    val remote = LocalInputModeManager.current.inputMode == InputMode.Keyboard
+    LaunchedEffect(Unit) {
+        if (remote && release.apkUrl != null) runCatching { installFocus.requestFocus() }
+    }
+
     val startInstall: (java.io.File) -> Unit = { file ->
         if (!installApk(context, file)) {
-            error = "Allow \"Install unknown apps\" for mochy, then tap Install here again."
+            error = context.getString(R.string.update_allow_unknown_apps)
         }
     }
 
-    Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
+    Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(top = sheetHandleRoom())) {
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -505,7 +552,7 @@ private fun ColumnScope.UpdateDetailContent(
     ) {
         Icon(
             painter = painterResource(R.drawable.arrow_back),
-            contentDescription = "Back",
+            contentDescription = stringResource(R.string.update_back_desc),
             modifier = Modifier.size(18.dp),
         )
         Spacer(modifier = Modifier.width(8.dp))
@@ -534,7 +581,7 @@ private fun ColumnScope.UpdateDetailContent(
             .padding(16.dp)
             .animateContentSize()
     ) {
-        Text(text = "Changelog", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        Text(text = stringResource(R.string.update_changelog), fontSize = 20.sp, fontWeight = FontWeight.Bold)
         Spacer(modifier = Modifier.height(4.dp))
         ChangelogMarkdown(
             markdown = release.body,
@@ -546,7 +593,7 @@ private fun ColumnScope.UpdateDetailContent(
     Spacer(modifier = Modifier.height(18.dp))
 
     Text(
-        text = "To Be Installed -",
+        text = stringResource(R.string.update_to_be_installed),
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         fontSize = 11.sp,
         fontWeight = FontWeight.SemiBold,
@@ -600,11 +647,14 @@ private fun ColumnScope.UpdateDetailContent(
             .height(48.dp)
             .clip(RoundedCornerShape(50))
             .background(MenuRowSurface)
+            .focusRequester(installFocus)
             .clickable(
-                enabled = !downloading && release.apkUrl != null,
+                // stays pressable while downloading, so a tv remote resting on it isn't thrown off the sheet
+                enabled = release.apkUrl != null,
                 interactionSource = remember { MutableInteractionSource() },
                 indication = RemoteFocus,
                 onClick = {
+                    if (downloading) return@clickable
                     error = null
                     if (isDownloaded(context, release)) {
                         startInstall(apkFileFor(context, release))
@@ -618,7 +668,7 @@ private fun ColumnScope.UpdateDetailContent(
                             onLocked(false)
                             result.fold(
                                 onSuccess = { startInstall(it) },
-                                onFailure = { error = it.message ?: "Download failed" },
+                                onFailure = { error = it.message ?: context.getString(R.string.update_download_failed) },
                             )
                         }
                     }
@@ -634,9 +684,9 @@ private fun ColumnScope.UpdateDetailContent(
         )
         Text(
             text = when {
-                downloading -> "Downloading… ${(animatedProgress * 100).toInt()}%"
-                release.apkUrl == null -> "No APK in this release"
-                else -> "Install here"
+                downloading -> stringResource(R.string.update_downloading_progress, (animatedProgress * 100).toInt())
+                release.apkUrl == null -> stringResource(R.string.update_no_apk)
+                else -> stringResource(R.string.update_install_here)
             },
             fontSize = 14.sp,
             fontWeight = FontWeight.Bold,
@@ -659,12 +709,13 @@ private fun ColumnScope.UpdateDetailContent(
                 onClick = { context.openUrl(release.htmlUrl) },
             )
     ) {
-        Text(text = "Open the web", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        Text(text = stringResource(R.string.update_open_web), fontSize = 14.sp, fontWeight = FontWeight.Bold)
     }
     }
 }
 
 internal fun android.content.Context.openUrl(url: String) {
+    if (!com.mochyy.mochymusic.core.updater.ApkVerifier.isSafeExternalWebUrl(url)) return
     runCatching {
         startActivity(
             android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))

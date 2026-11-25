@@ -35,10 +35,12 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
@@ -46,6 +48,7 @@ import androidx.compose.ui.unit.sp
 import com.mochyy.mochymusic.R
 import com.mochyy.mochymusic.lyrics.EmbeddedLyrics
 import com.mochyy.mochymusic.lyrics.LyricsProviderRegistry
+import com.mochyy.mochymusic.lyrics.UnisonLyricsProvider
 import com.mochyy.mochymusic.ui.theme.InterFontFamily
 import com.mochyy.mochymusic.ui.utils.safeOpenUri
 import com.mochyy.mochymusic.viewmodels.LyricsMenuViewModel
@@ -55,18 +58,15 @@ private val LabelColor = Color.White.copy(alpha = 0.55f)
 private val ValueColor = Color.White.copy(alpha = 0.38f)
 private val StarColor = Color(0xFFFFD60A)
 
-private val FooterTextStyle = TextStyle(
-    fontFamily = InterFontFamily,
-    fontSize = 17.sp,
-    letterSpacing = (-0.01).em,
-    color = ValueColor,
+private val FooterTextStyleCache = com.mochyy.mochymusic.ui.theme.globalTextStyle(
+    TextStyle(fontSize = 17.sp, letterSpacing = (-0.01).em, color = ValueColor),
 )
+private val FooterTextStyle: TextStyle get() = FooterTextStyleCache.current()
 
-private val ButtonTextStyle = TextStyle(
-    fontFamily = InterFontFamily,
-    fontWeight = FontWeight.SemiBold,
-    fontSize = 13.sp,
+private val ButtonTextStyleCache = com.mochyy.mochymusic.ui.theme.globalTextStyle(
+    TextStyle(fontWeight = FontWeight.SemiBold, fontSize = 13.sp),
 )
+private val ButtonTextStyle: TextStyle get() = ButtonTextStyleCache.current()
 
 /**
  * The end of the lyrics page: where these lyrics came from, a button to pick another source and,
@@ -77,18 +77,37 @@ internal fun LyricsSourceFooter(
     provider: String,
     onSwitchSource: (() -> Unit)?,
     modifier: Modifier = Modifier,
+    rawLyrics: String? = null,
 ) {
     val context = LocalContext.current
     val uriHandler = LocalUriHandler.current
     val project = remember(provider) { LyricsProviderRegistry.getProject(provider) }
+    val website = remember(provider) { LyricsProviderRegistry.getWebsite(provider) }
+    // unison's license asks for both the song page and the submitter's profile to be linked here
+    val unisonCredit = remember(provider, rawLyrics) {
+        if (provider == UnisonLyricsProvider.name) UnisonLyricsProvider.parseCredit(rawLyrics) else null
+    }
+    val sourceUrl = unisonCredit?.songUrl ?: website
 
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            LabeledText(label = "Source", value = sourceName(provider))
+            LabeledText(
+                label = stringResource(R.string.pc_lyrics_source),
+                value = sourceName(provider),
+                onValueClick = sourceUrl?.let { url -> { uriHandler.safeOpenUri(context, url) } },
+            )
             if (onSwitchSource != null) {
                 Spacer(modifier = Modifier.width(10.dp))
                 SwitchSourceButton(onClick = onSwitchSource)
             }
+        }
+        val submitterName = unisonCredit?.submitterName
+        if (submitterName != null) {
+            LabeledText(
+                label = stringResource(R.string.pc_lyrics_submitted_by),
+                value = submitterName,
+                onValueClick = unisonCredit.submitterUrl?.let { url -> { uriHandler.safeOpenUri(context, url) } },
+            )
         }
         if (project != null) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -101,21 +120,30 @@ internal fun LyricsSourceFooter(
 }
 
 /** The name to show for a saved provider, including the two that aren't online sources. */
+@Composable
 private fun sourceName(provider: String): String = when (provider) {
-    EmbeddedLyrics.Provider -> "Song file"
-    LyricsMenuViewModel.USER_EDITED -> "Your edit"
+    EmbeddedLyrics.Provider -> stringResource(R.string.pc_lyrics_song_file)
+    LyricsMenuViewModel.USER_EDITED -> stringResource(R.string.pc_lyrics_your_edit)
     else -> LyricsProviderRegistry.getDisplayName(provider)
 }
 
 @Composable
-private fun LabeledText(label: String, value: String?) {
+private fun LabeledText(label: String, value: String?, onValueClick: (() -> Unit)? = null) {
     Text(
         text = buildAnnotatedString {
             withStyle(SpanStyle(fontWeight = FontWeight.Bold, color = LabelColor)) { append(label) }
-            if (value != null) append(" $value")
+            if (value == null) return@buildAnnotatedString
+            append(" ")
+            // an underline tells people the source name opens its website
+            if (onValueClick != null) {
+                withStyle(SpanStyle(textDecoration = TextDecoration.Underline)) { append(value) }
+            } else {
+                append(value)
+            }
         },
         style = FooterTextStyle,
         maxLines = 1,
+        modifier = if (onValueClick != null) Modifier.clickable(onClick = onValueClick) else Modifier,
     )
 }
 
@@ -127,7 +155,7 @@ private fun SwitchSourceButton(onClick: () -> Unit) {
         background = Color.White.copy(alpha = 0.08f),
     ) {
         FooterIcon(Icons.Rounded.SwapVert, tint = LabelColor)
-        Text(text = "Switch", style = ButtonTextStyle.copy(color = LabelColor))
+        Text(text = stringResource(R.string.pc_lyrics_switch), style = ButtonTextStyle.copy(color = LabelColor))
     }
 }
 
@@ -145,7 +173,7 @@ private fun StarOnGitHubButton(onClick: () -> Unit) {
             tint = Color.White.copy(alpha = 0.85f),
             modifier = Modifier.size(15.dp),
         )
-        Text(text = "Star on GitHub", style = ButtonTextStyle.copy(color = Color.White.copy(alpha = 0.85f)))
+        Text(text = stringResource(R.string.pc_star_github), style = ButtonTextStyle.copy(color = Color.White.copy(alpha = 0.85f)))
         FooterIcon(Icons.Rounded.Star, tint = StarColor)
     }
 }

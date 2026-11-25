@@ -36,9 +36,11 @@ import androidx.compose.ui.input.pointer.util.addPointerInputChange
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalViewConfiguration
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import com.mochyy.mochymusic.R
 import com.mochyy.mochymusic.constants.PlayerBottomBarStyle
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -81,19 +83,21 @@ private class BarStage(
 
     init {
         with(density) {
+            val landscape = w > h
             val own = bars[applied]
             val tallest = bars.maxOf { it.height }
-            barTo = Offset(w / 2f, h * BarLandingY)
-            labelY = barTo.y - tallest / 2f - 14.dp.toPx() - LabelHalf.toPx()
+            val landingY = if (landscape) 0.66f else BarLandingY
+            barTo = Offset(w / 2f, h * landingY)
+            labelY = barTo.y - tallest / 2f - (if (landscape) 10.dp else 14.dp).toPx() - LabelHalf.toPx()
             val labelTop = labelY - LabelHalf.toPx()
             transportTo = Offset(
-                transport.center.x,
-                minOf(h * TransportLandingY, labelTop - 20.dp.toPx() - transport.height / 2f),
+                if (landscape) w / 2f else transport.center.x,
+                minOf(h * (if (landscape) 0.30f else TransportLandingY), labelTop - (if (landscape) 12.dp else 20.dp).toPx() - transport.height / 2f),
             )
             stride = bars.maxOf { it.width } + CardGap.toPx()
             rowTop = barTo.y - tallest / 2f - TilePadding.toPx()
             rowBottom = barTo.y + tallest / 2f + TilePadding.toPx()
-            camera = StudioCamera(BarCameraZoom, own.center, barTo)
+            camera = StudioCamera(if (landscape) 1.25f else BarCameraZoom, own.center, barTo)
         }
     }
 }
@@ -281,7 +285,7 @@ internal fun BarEditor(
                 }
             },
         ) {
-            Text("Card Style", color = Color.White, style = studioText(StudioType.Title, FontWeight.Bold))
+            Text(stringResource(R.string.ps_studio_card_style), color = Color.White, style = studioText(StudioType.Title, FontWeight.Bold))
             AnimatedContent(
                 targetState = barStyles.getOrNull(focused)?.displayName.orEmpty(),
                 transitionSpec = {

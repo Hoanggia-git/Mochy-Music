@@ -28,7 +28,7 @@ internal class PhoneLibraryRoutes(
     private val context: Context,
     private val database: MusicDatabase,
     private val internalDatabase: InternalDatabase,
-    private val downloadUtil: DownloadUtil,
+    private val downloadUtil: dagger.Lazy<DownloadUtil>,
 ) {
     // the whole library database, copied under its lock and squeezed on the way out
     fun snapshot(): LinkResponse {
@@ -52,9 +52,10 @@ internal class PhoneLibraryRoutes(
     // every song the phone can play without the internet: its finished downloads and its own song files
     fun files(): JSONArray {
         val out = JSONArray()
-        val cache = downloadUtil.downloadCache
+        val downloads = downloadUtil.get()
+        val cache = downloads.downloadCache
         val formats = mimeTypes()
-        downloadUtil.downloads.value.values
+        downloads.downloads.value.values
             .filter { it.state == Download.STATE_COMPLETED }
             .forEach { download ->
                 val id = download.request.id
@@ -77,7 +78,7 @@ internal class PhoneLibraryRoutes(
             val mime = runCatching { context.contentResolver.getType(uri) }.getOrNull() ?: "audio/mpeg"
             return LinkResponse.ranged(request, length, mime) { start, count, out -> copyLocal(uri, start, count, out) }
         }
-        val cache = downloadUtil.downloadCache
+        val cache = downloadUtil.get().downloadCache
         val length = ContentMetadata.getContentLength(cache.getContentMetadata(songId))
         if (length <= 0 || !cache.isCached(songId, 0, length)) return LinkResponse.status(404)
         val mime = mimeTypes()[songId] ?: "audio/mp4"
@@ -125,6 +126,26 @@ internal class PhoneLibraryRoutes(
         }
         // written past room, so its screens are told by hand
         internalDatabase.invalidationTracker.refreshVersionsAsync()
+    }
+
+    // a short sum of what a tv shows from this library: likes, library songs, saved albums and artists, playlists and their order; plays leave it alone
+    fun mark(): String {
+        val db = database.openHelper.readableDatabase
+        var sum = 1_125_899_906_842_597L
+        fun add(sql: String) {
+            db.query(sql).use { cursor ->
+                while (cursor.moveToNext()) {
+                    for (i in 0 until cursor.columnCount) sum = 31 * sum + (cursor.getString(i)?.hashCode() ?: 0)
+                }
+            }
+        }
+        add("SELECT id, likedDate FROM song WHERE liked = 1 ORDER BY id")
+        add("SELECT id FROM song WHERE inLibrary IS NOT NULL ORDER BY id")
+        add("SELECT id FROM album WHERE bookmarkedAt IS NOT NULL ORDER BY id")
+        add("SELECT id FROM artist WHERE bookmarkedAt IS NOT NULL ORDER BY id")
+        add("SELECT id, name, bookmarkedAt FROM playlist ORDER BY id")
+        add("SELECT playlistId, songId, position FROM playlist_song_map ORDER BY playlistId, position")
+        return java.lang.Long.toHexString(sum)
     }
 
     private fun mimeTypes(): Map<String, String> =

@@ -108,11 +108,13 @@ private fun SongShareDialog(
                     started.pick = pick
                     started.lyrics = Fetched.Found(heldLyrics)
                 }
+                started.readingChoice = startingReadingChoice(context)
             }
         }
         val sheets = remember { PopupSheetState() }
 
         ReadLyricsLook(session)
+        ShareLyricReadings(session)
 
         LaunchedEffect(Unit) {
             if (pick != null) {
@@ -130,7 +132,7 @@ private fun SongShareDialog(
         }
         LaunchedEffect(session) {
             launch { loadShareArt(context, session) }
-            launch { loadAnimatedCover(session) }
+            launch { loadAnimatedCover(context, session) }
             launch { findMusicVideo(session) }
             if (heldLyrics == null) {
                 loadShareLyrics(session, database, playerConnection?.service?.lyricsHelper)
@@ -147,10 +149,20 @@ private fun SongShareDialog(
             snapshotFlow { ((session.background as? SongBackground.Still)?.background as? ShareBackground.Picture)?.uri }
                 .collect { uri -> if (uri != null) loadPictureArt(context, session, uri) }
         }
-        // lining the music video up means listening to both; it only happens once the music video is picked
+        // lining the music video up means listening to both; it only happens once the music video is picked (full canvas or card only)
         LaunchedEffect(session) {
-            snapshotFlow { (session.background as? SongBackground.Video)?.source == ShareVideoSource.MusicVideo }.first { it }
+            snapshotFlow { session.activeVideoSource == ShareVideoSource.MusicVideo }.first { it }
             matchMusicVideo(session, playerConnection?.service)
+        }
+        // if the user picks a YouTube video from search that happens to match the song's audio, line it up automatically too
+        LaunchedEffect(session) {
+            var matchedId: String? = null
+            snapshotFlow { session.pickedYouTubeVideo.found?.videoId }.collectLatest { videoId ->
+                if (videoId != null && videoId != matchedId) {
+                    matchedId = videoId
+                    matchPickedYouTubeVideo(session, videoId, playerConnection?.service)
+                }
+            }
         }
         MovesThePlayhead(session)
         SongPreviewAudio(session)

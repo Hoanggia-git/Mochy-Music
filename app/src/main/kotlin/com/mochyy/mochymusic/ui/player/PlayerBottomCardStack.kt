@@ -55,6 +55,7 @@ import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -64,6 +65,7 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import coil3.compose.AsyncImage
 import com.mochyy.mochymusic.LocalPlayerConnection
+import com.mochyy.mochymusic.R
 import com.mochyy.mochymusic.db.entities.LyricsEntity.Companion.LYRICS_NOT_FOUND
 import com.mochyy.mochymusic.lyrics.LyricsUtils
 import com.mochyy.mochymusic.ui.component.GlassState
@@ -73,11 +75,11 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /** The card's visible height. Its body carries on below the screen edge - see [BottomBleed]. */
-internal val PlayerCardHeight = 54.dp
-internal val PlayerCardCorner = 28.dp
+internal val PlayerCardHeight = 46.dp
+internal val PlayerCardCorner = 24.dp
 
 /** How far the card in front sits from the screen's bottom edge, back card included. */
-internal val PeekOffset = 9.dp
+internal val PeekOffset = 7.dp
 
 /** The whole deck's height on screen: the card plus the back card peeking over it. */
 internal val PlayerDeckHeight = PlayerCardHeight + PeekOffset
@@ -110,11 +112,8 @@ internal class PlayerCardLook(
     val borderWidth: Dp,
 )
 
-// the classic's glassy card, the one behind peeking over it
-internal val ClassicCardLook = PlayerCardLook(PlayerCardCorner, 0.11f, 0.20f, 0.06f, 0.10f, 1.dp)
-
-// the new flagship's faint 4% fill and 12% outline, layered and sized like the classic's, the card behind as much fainter as the classic's is
-internal val FlagshipCardLook = PlayerCardLook(PlayerCardCorner, 0.04f, 0.12f, 0.02f, 0.06f, 1.35.dp)
+// the flagship's subtle low-opacity fill and outline, with the card behind even fainter
+internal val FlagshipCardLook = PlayerCardLook(PlayerCardCorner, 0.025f, 0.08f, 0.012f, 0.04f, 1.15.dp)
 
 /** Where each card's content starts, so a page can grow it from the right spot. */
 private val LyricContentStart = 18.dp
@@ -151,7 +150,7 @@ internal fun PlayerBottomCardStack(
      * the lyrics (and of the queue). Read while laying out and drawing only.
      */
     growthProvider: () -> Float = { 0f },
-    look: PlayerCardLook = ClassicCardLook,
+    look: PlayerCardLook = FlagshipCardLook,
 ) {
     val playerConnection = LocalPlayerConnection.current ?: return
 
@@ -602,7 +601,7 @@ private fun NextSongRow(
         Column(modifier = Modifier.weight(1f).fadingRightEdge()) {
 
             Text(
-                text = "Next Song",
+                text = stringResource(R.string.pc_next_song),
                 style = MaterialTheme.typography.labelSmall.copy(lineHeight = 11.sp),
                 color = Color.White.copy(alpha = 0.5f),
             )
@@ -611,7 +610,7 @@ private fun NextSongRow(
                     listOfNotNull(nextTitle, nextArtist?.takeIf { it.isNotBlank() })
                         .joinToString(" - ")
                 } else {
-                    "End of queue"
+                    stringResource(R.string.pc_end_of_queue)
                 },
                 style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 15.sp),
                 fontWeight = FontWeight.SemiBold,
